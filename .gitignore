@@ -3,3 +3,4 @@ dist/
 test-results/
 .sandbox-profile/
 sandbox/scenarios.json
+__pycache__/
