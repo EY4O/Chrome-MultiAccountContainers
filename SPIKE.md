@@ -5,7 +5,7 @@ isolation (separate cookies and site storage per container, in the same window)
 before porting any of Multi-Account Containers' UI.
 
 **Verdict: it's viable for everyday logins, with known gaps (listed below).** All 33
-automated isolation checks pass, three runs in a row, in Chrome for Testing 156.
+automated isolation checks and 7 restart checks pass, in repeated runs, in Chrome for Testing 156.
 Logging in to real sites is the next gate, and that's your manual test (see
 the end of this file).
 
@@ -20,8 +20,9 @@ the end of this file).
 | Storage | `localStorage`, `sessionStorage` and IndexedDB keys get a `__mac_<id>__` prefix. Default tabs can't see container keys. | `main.ts` |
 | Write barrier | `fetch`/XHR wait for pending `document.cookie` writes to reach the rules. A `fetch` response isn't handed to the page until any `Set-Cookie` on it has reached the rules. | `main.ts`, `isolated.ts` |
 | Stale-navigation replay | A top-level GET that left before the rules caught up (login → `302` + `Set-Cookie` → `/home`) is detected in `onSendHeaders` and replayed. The stale response's cookies are discarded, so an anonymous session can't overwrite the login. | `index.ts` |
-| New tabs | A tab only inherits its opener's container on `webNavigation.onCreatedNavigationTarget`. Until it's classified, a quarantine rule blocks its requests, and the blocked load is replayed once the tab is classified. | `index.ts` |
-| Visuals | Container tabs go into a coloured Chrome tab group. | `index.ts` |
+| New tabs | A tab only inherits its opener's container on `webNavigation.onCreatedNavigationTarget`. A tab Chrome creates inside a container's group joins that container. Until it's classified, the tab's requests are blocked, and the blocked load is replayed once it's classified. | `index.ts` |
+| Lockdown | A persistent dynamic rule blocks every request. A session rule lifts it for the tabs the worker has classified. Session rules disappear on browser restart and extension reload, so restored tabs can't send anything until the worker has re-assigned them. If the rules can't be written twice in a row, the lockdown is removed (fails open) so browsing keeps working. | `rules.ts`, `index.ts` |
+| Restart | Container tabs live in a tab group titled with the container's name (names must be unique). On startup, tabs in a group whose title and colour match a container go back into it. Their blocked loads are found with `webNavigation.getAllFrames` and replayed. Session cookies are kept if the session restored any tabs, as Chrome does with "Continue where you left off". | `index.ts` |
 
 ## Measured
 
@@ -35,7 +36,7 @@ the end of this file).
 Not handled yet, roughly from most to least important:
 
 1. **Service workers.** A worker registered from a default tab still controls that site's pages in container tabs, and its fetches carry no tab id, so they get the *real* profile cookies. Container documents can't register workers, which breaks PWAs, offline mode and push in containers.
-2. **Restart.** Tab→container assignments live in `storage.session`. After a browser restart, restored container tabs reload as default tabs. They must be restored into their containers before shipping.
+2. **Group membership is the record.** Dragging a container tab out of its group, or renaming or recolouring the group, has no effect until a restart. After a restart, the tab follows whatever group it's in. Containers and groups don't stay in sync while Chrome is running.
 3. **Redirects inside `fetch`/XHR.** A cookie set by a `3xx` on a subresource request is missing from the redirected request. Only top-level navigations get replayed.
 4. **XHR responses** don't get the post-response barrier, only `fetch` does. Synchronous XHR gets neither.
 5. **Unisolated state:** HTTP cache, Cache API, BroadcastChannel, SharedWorker, Web Locks, and IndexedDB used from workers. These allow cross-container tracking and some state bleed.
@@ -52,6 +53,7 @@ npm install
 npm run build
 npm test          # unit: cookie semantics + DNR rule selection (simulated)
 npm run e2e       # e2e: needs Chrome for Testing; see below
+npm run e2e:restart  # close and relaunch with session restore on one profile
 ```
 
 Branded Chrome no longer accepts `--load-extension`, so the e2e suite uses

@@ -53,7 +53,12 @@ select.value = "blue";
 form.onsubmit = async (e) => {
   e.preventDefault();
   const data = new FormData(form);
-  await send({ type: "mac:create", name: String(data.get("name")), color: data.get("color") as GroupColor });
+  const created = await send<{ error?: string }>({
+    type: "mac:create",
+    name: String(data.get("name")),
+    color: data.get("color") as GroupColor,
+  });
+  if (created?.error) return alert(created.error);
   form.reset();
   select.value = "blue";
   void render();

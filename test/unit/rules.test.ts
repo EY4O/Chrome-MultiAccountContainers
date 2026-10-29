@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildRules } from "../../src/background/rules.ts";
+import { LOCKDOWN_RULE, buildRules } from "../../src/background/rules.ts";
 import { type Cookie, type SiteContext, cookiesForUrl, parseSetCookie, serialize } from "../../src/shared/cookie.ts";
 
 const now = 1_700_000_000_000;
@@ -65,8 +65,12 @@ test("DNR rule choice matches browser cookie semantics", () => {
   assert.equal(cookieHeaderFor(rules, 99, "https://a.example.com/", "same-site"), null, "other tabs untouched");
 });
 
-test("quarantine excludes known tabs and requests without a tab", () => {
-  const [quarantine] = buildRules({ containers: [], knownTabIds: [1, 2], now });
-  assert.equal(quarantine.action.type, "block");
-  assert.deepEqual(quarantine.condition.excludedTabIds, [-1, 1, 2]);
+test("only known tabs and tabless requests escape the lockdown", () => {
+  const rules = buildRules({ containers: [{ id: "c1", tabIds: [1], cookies: jarFrom([["a=1", "https://x.com/"]]) }], knownTabIds: [1, 2], now });
+  const allow = rules.find((r) => r.action.type === "allow")!;
+  assert.deepEqual(allow.condition.tabIds, [-1, 1, 2]);
+  assert.ok(allow.priority! > LOCKDOWN_RULE.priority!, "allow beats the lockdown");
+  for (const r of rules.filter((r) => r.action.type === "modifyHeaders")) {
+    assert.ok(r.priority! > allow.priority!, `allow must not suppress modifyHeaders rule ${r.id}`);
+  }
 });

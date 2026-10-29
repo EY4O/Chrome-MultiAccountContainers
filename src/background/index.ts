@@ -11,7 +11,7 @@ import {
   siteOf,
 } from "../shared/cookie.ts";
 import type { BgMessage, SnapshotReply } from "../shared/messages.ts";
-import { buildRules } from "./rules.ts";
+import { LOCKDOWN_RULE, buildRules } from "./rules.ts";
 import * as state from "./state.ts";
 
 export const stats = {
@@ -23,6 +23,8 @@ export const stats = {
   setCookieIgnored: 0,
   renavigations: 0,
   staleNavigations: 0,
+  restoredIntoContainers: 0,
+  lockdown: false,
   lastError: "",
 };
 
@@ -30,6 +32,15 @@ export const stats = {
 
 let syncing: Promise<void> | null = null;
 let dirty = false;
+let consecutiveFailures = 0;
+
+async function setLockdown(on: boolean): Promise<void> {
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [LOCKDOWN_RULE.id],
+    addRules: on ? [LOCKDOWN_RULE] : [],
+  });
+  stats.lockdown = on;
+}
 
 /** Coalesces bursts of changes into as few updateSessionRules calls as possible. */
 function scheduleSync(): Promise<void> {
@@ -67,9 +78,16 @@ async function syncRules(): Promise<void> {
       addRules: rules,
     });
     stats.lastError = "";
+    consecutiveFailures = 0;
+    // Installed only once the allow rule exists, so a fresh install never
+    // blocks tabs that were open before it. Persists across restarts.
+    if (!stats.lockdown) await setLockdown(true).catch((e) => console.error("lockdown failed", e));
   } catch (e) {
     stats.lastError = String(e);
     console.error("rule sync failed", e, rules);
+    // Retry once; after that fail open rather than leave every tab blocked.
+    if (++consecutiveFailures === 1) dirty = true;
+    else if (stats.lockdown) await setLockdown(false).catch(() => {});
   }
   stats.syncs++;
   stats.ruleCount = rules.length;
@@ -214,9 +232,14 @@ chrome.tabs.onCreated.addListener((tab) => void onTabCreated(tab));
 const awaitingNavTarget = new Map<number, ReturnType<typeof setTimeout>>();
 
 async function onTabCreated(tab: chrome.tabs.Tab): Promise<void> {
-  await state.ready;
+  await startup;
   if (tab.id === undefined || state.isKnownTab(tab.id)) return;
   const tabId = tab.id;
+  // A tab Chrome creates inside a container's group (e.g. "New tab to the
+  // right") belongs to that container, as it would after a restart.
+  const groupContainer = await containerOfGroup(tab.groupId);
+  if (state.isKnownTab(tabId)) return;
+  if (groupContainer) return classify(tabId, groupContainer);
   const openerContainer = tab.openerTabId === undefined ? undefined : state.containerOfTab(tab.openerTabId);
   if (!openerContainer) return classify(tabId, null);
   awaitingNavTarget.set(tabId, setTimeout(() => {
@@ -226,7 +249,7 @@ async function onTabCreated(tab: chrome.tabs.Tab): Promise<void> {
 }
 
 chrome.webNavigation.onCreatedNavigationTarget.addListener((details) => void (async () => {
-  await state.ready;
+  await startup;
   clearTimeout(awaitingNavTarget.get(details.tabId));
   awaitingNavTarget.delete(details.tabId);
   if (state.isKnownTab(details.tabId)) return;
@@ -244,7 +267,7 @@ chrome.webRequest.onErrorOccurred.addListener(
 
 async function onRequestError(details: chrome.webRequest.OnErrorOccurredDetails): Promise<void> {
   if (details.tabId < 0 || details.error !== "net::ERR_BLOCKED_BY_CLIENT") return;
-  await state.ready;
+  await startup;
   const inProgress = classifying.get(details.tabId);
   if (inProgress) {
     await inProgress;
@@ -257,7 +280,7 @@ async function onRequestError(details: chrome.webRequest.OnErrorOccurredDetails)
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => void (async () => {
-  await state.ready;
+  await startup;
   classifiedAt.delete(tabId);
   renavigated.delete(tabId);
   await state.forgetTab(tabId);
@@ -265,11 +288,22 @@ chrome.tabs.onRemoved.addListener((tabId) => void (async () => {
 })());
 
 chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => void (async () => {
-  await state.ready;
+  await startup;
   const containerId = state.containerOfTab(removedTabId) ?? null;
   await state.forgetTab(removedTabId);
   await classify(addedTabId, containerId);
 })());
+
+/** Container whose name and colour match the tab group, if any. */
+async function containerOfGroup(groupId: number | undefined): Promise<string | null> {
+  if (groupId === undefined || groupId === chrome.tabGroups.TAB_GROUP_ID_NONE) return null;
+  try {
+    const group = await chrome.tabGroups.get(groupId);
+    return state.listContainers().find((c) => c.name === group.title && c.color === group.color)?.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 async function groupTab(tabId: number, containerId: string): Promise<void> {
   const container = state.getContainer(containerId);
@@ -290,7 +324,7 @@ async function groupTab(tabId: number, containerId: string): Promise<void> {
 
 /** Opens `url` in a new tab that belongs to the container from its first request. */
 export async function openTab(url: string, containerId: string, windowId?: number): Promise<number> {
-  await state.ready;
+  await startup;
   if (!state.getContainer(containerId)) throw new Error(`no container ${containerId}`);
   const tab = await chrome.tabs.create({ url: "about:blank", windowId });
   await classify(tab.id!, containerId);
@@ -323,7 +357,7 @@ const fromExtensionPage = (sender: chrome.runtime.MessageSender) =>
   !sender.tab && sender.url?.startsWith(chrome.runtime.getURL(""));
 
 async function handle(msg: BgMessage, sender: chrome.runtime.MessageSender): Promise<unknown> {
-  await state.ready;
+  await startup;
   switch (msg.type) {
     case "mac:get-snapshot":
       return snapshotFor(sender, msg.url);
@@ -373,12 +407,49 @@ chrome.runtime.onMessage.addListener((msg: BgMessage, sender, sendResponse) => {
 
 // --- Lifecycle -----------------------------------------------------------------
 
-chrome.runtime.onStartup.addListener(() => void state.ready.then(state.dropSessionCookies));
+// Runs on every worker start. After a browser restart or an extension reload
+// the session state and session rules are gone, and the lockdown rule is
+// blocking every tab. Restored tabs get their container back from the tab
+// group they were restored into; then the blocked loads are replayed.
+const startup: Promise<{ httpTabs: number }> = state.ready
+  .then(async () => {
+    const tabs = await chrome.tabs.query({});
+    const groupContainer = new Map<number, string>();
+    for (const tab of tabs) {
+      if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE && !groupContainer.has(tab.groupId)) {
+        const containerId = await containerOfGroup(tab.groupId);
+        if (containerId) groupContainer.set(tab.groupId, containerId);
+      }
+    }
+    const added = await state.reconcileTabs(tabs, (tab) => groupContainer.get(tab.groupId) ?? null);
+    await scheduleSync();
+    const now = Date.now();
+    for (const tabId of added) classifiedAt.set(tabId, now);
+    for (const [tabId, url] of blockedNav) {
+      blockedNav.delete(tabId);
+      renavigate(tabId, url);
+    }
+    // Restored tabs that loaded while the extension was still starting were
+    // blocked before the worker could hear about it; find their error pages.
+    for (const tabId of added) {
+      const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
+      const top = frames?.find((f) => f.frameId === 0);
+      if (top?.errorOccurred && /^https?:/.test(top.url)) renavigate(tabId, top.url);
+    }
+    stats.restoredIntoContainers += added.filter((tabId) => state.containerOfTab(tabId)).length;
+    return { httpTabs: tabs.filter((t) => /^https?:/.test(t.url || t.pendingUrl || "")).length };
+  })
+  .catch((e) => {
+    console.error("startup failed", e);
+    stats.lastError = `startup: ${e}`;
+    return { httpTabs: 0 };
+  });
 
-void state.ready.then(async () => {
-  await state.reconcileTabs(await chrome.tabs.query({}));
-  await scheduleSync();
-});
+// Like Chrome's "Continue where you left off": if the session came back,
+// session cookies come back with it; a fresh session starts without them.
+chrome.runtime.onStartup.addListener(() => void startup.then(async ({ httpTabs }) => {
+  if (!httpTabs) await state.dropSessionCookies();
+}));
 
 // Test hook: the e2e suite drives the engine through the worker's global scope.
 Object.assign(globalThis, {

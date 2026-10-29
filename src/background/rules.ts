@@ -7,6 +7,12 @@
 // Because a more specific scope's cookie set always contains the matching
 // cookies of every less specific scope, skipping empty sets is safe: the
 // request falls through to the per-container "remove Cookie" fallback.
+//
+// Unclassified tabs are handled by two rules working together: a persistent
+// dynamic LOCKDOWN rule blocks everything, and a session rule allows the tabs
+// the worker knows about. Session rules vanish on browser restart and on
+// extension reload, so until the worker has re-assigned the restored tabs,
+// nothing they send can carry the wrong identity.
 
 import {
   type Cookie,
@@ -80,26 +86,40 @@ export function encodeSnapshot(cookies: Cookie[]): string {
   return encodeURIComponent(JSON.stringify(visible.map((c) => [c.name, c.value, c.expires ?? 0])));
 }
 
+/** Priorities: lockdown < allow-known-tabs < every modifyHeaders rule. An allow
+ * rule suppresses lower-priority modifyHeaders rules, so it sits below them. */
+const P_LOCKDOWN = 1;
+const P_ALLOW = 2;
+const P_FALLBACK = 3;
+
+export const LOCKDOWN_RULE: Rule = {
+  id: 1,
+  priority: P_LOCKDOWN,
+  action: { type: "block" as chrome.declarativeNetRequest.RuleActionType },
+  condition: { resourceTypes: ALL_TYPES },
+};
+
 export function buildRules({ containers, knownTabIds, now = Date.now() }: RuleBuildInput): Rule[] {
   const rules: Rule[] = [];
   let id = 1;
   const allContainerTabs = containers.flatMap((c) => c.tabIds);
 
-  // Quarantine: a tab the worker has not classified yet (e.g. a popup opened
-  // by a container tab a few ms ago) gets every request blocked; the worker
-  // re-navigates it once it knows which container it belongs to.
+  // Lifts LOCKDOWN_RULE for classified tabs and for requests with no tab. A tab
+  // the worker hasn't classified yet (a popup a container tab opened a few ms
+  // ago, or a tab restored at startup) stays blocked; the worker replays its
+  // load once it knows the tab's container.
   rules.push({
     id: id++,
-    priority: 1_000_000_000,
-    action: { type: "block" as chrome.declarativeNetRequest.RuleActionType },
-    condition: { excludedTabIds: [-1, ...knownTabIds], resourceTypes: ALL_TYPES },
+    priority: P_ALLOW,
+    action: { type: "allow" as chrome.declarativeNetRequest.RuleActionType },
+    condition: { tabIds: [-1, ...knownTabIds], resourceTypes: ALL_TYPES },
   });
 
   if (allContainerTabs.length) {
     // Never let the real cookie store leak into, or be written by, a container tab.
     rules.push({
       id: id++,
-      priority: 1,
+      priority: P_FALLBACK,
       action: {
         type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
         requestHeaders: [{ header: "cookie", operation: "remove" as chrome.declarativeNetRequest.HeaderOperation }],
@@ -114,7 +134,7 @@ export function buildRules({ containers, knownTabIds, now = Date.now() }: RuleBu
 
     rules.push({
       id: id++,
-      priority: 1,
+      priority: P_FALLBACK,
       action: {
         type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
         responseHeaders: [{
@@ -157,7 +177,7 @@ export function buildRules({ containers, knownTabIds, now = Date.now() }: RuleBu
             const snapshot = encodeSnapshot(cookies);
             rules.push({
               id: id++,
-              priority: 10 + specificity * 100_000 + Math.min(path.length, 9_999) * 10 + bonus,
+              priority: P_FALLBACK + 10 + specificity * 100_000 + Math.min(path.length, 9_999) * 10 + bonus,
               action: {
                 type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
                 requestHeaders: [{

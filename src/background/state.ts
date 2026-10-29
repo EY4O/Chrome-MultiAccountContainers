@@ -45,6 +45,8 @@ export function getContainer(id: string): Container | undefined {
 }
 
 export async function createContainer(name: string, color: GroupColor): Promise<Container> {
+  // Tab groups are matched back to containers by name after a restart.
+  if (containers.some((c) => c.name === name)) throw new Error(`A container named "${name}" already exists`);
   const container = { id: crypto.randomUUID().slice(0, 8), name, color };
   containers = [...containers, container];
   jars.set(container.id, []);
@@ -111,10 +113,24 @@ export async function forgetTab(tabId: number): Promise<void> {
   await saveSession();
 }
 
-/** Drops tabs that no longer exist and classifies ones we never saw. */
-export async function reconcileTabs(openTabs: chrome.tabs.Tab[]): Promise<void> {
+/**
+ * Drops tabs that no longer exist and classifies ones we never saw, returning
+ * the newly classified tab ids.
+ */
+export async function reconcileTabs(
+  openTabs: chrome.tabs.Tab[],
+  containerFor: (tab: chrome.tabs.Tab) => string | null,
+): Promise<number[]> {
   const open = new Set(openTabs.map((t) => t.id!));
   for (const tabId of knownTabIds()) if (!open.has(tabId)) await forgetTab(tabId);
-  for (const t of openTabs) if (!isKnownTab(t.id!)) session.defaultTabs.push(t.id!);
+  const added: number[] = [];
+  for (const t of openTabs) {
+    if (isKnownTab(t.id!)) continue;
+    const containerId = containerFor(t);
+    if (containerId) session.tabContainer[t.id!] = containerId;
+    else session.defaultTabs.push(t.id!);
+    added.push(t.id!);
+  }
   await saveSession();
+  return added;
 }
