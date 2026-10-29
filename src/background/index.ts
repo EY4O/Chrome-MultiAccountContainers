@@ -11,7 +11,7 @@ import {
   siteOf,
 } from "../shared/cookie.ts";
 import type { BgMessage, SnapshotReply } from "../shared/messages.ts";
-import { LOCKDOWN_RULE, buildRules } from "./rules.ts";
+import { LOCKDOWN_RULE, buildRules, ruleUsage } from "./rules.ts";
 import * as state from "./state.ts";
 
 export const stats = {
@@ -25,6 +25,8 @@ export const stats = {
   staleNavigations: 0,
   restoredIntoContainers: 0,
   lockdown: false,
+  /** Containers whose cookie rules didn't fit Chrome's limits (their tabs send no cookies). */
+  overBudget: [] as string[],
   lastError: "",
 };
 
@@ -61,16 +63,69 @@ async function barrier(): Promise<void> {
   await (syncing ?? Promise.resolve());
 }
 
+// Chrome's session-rule limits. Overridable so tests can reach them.
+const limits = {
+  total: chrome.declarativeNetRequest.MAX_NUMBER_OF_SESSION_RULES ?? 5000,
+  regex: chrome.declarativeNetRequest.MAX_NUMBER_OF_REGEX_RULES ?? 1000,
+};
+
+const fits = (rules: chrome.declarativeNetRequest.Rule[]) => {
+  const usage = ruleUsage(rules);
+  return usage.total <= limits.total && usage.regex <= limits.regex;
+};
+
+/** Rule inputs for every container, optionally with one more tab assigned. */
+function ruleInputs(extra?: { tabId: number; containerId: string }) {
+  return state.listContainers().map((c) => ({
+    id: c.id,
+    storageId: c.storageId,
+    tabIds: [...state.tabsOf(c.id), ...(extra?.containerId === c.id ? [extra.tabId] : [])],
+    cookies: state.getJar(c.id),
+  }));
+}
+
+/** Whether adding a tab to this container keeps the rules within Chrome's limits. */
+function roomFor(containerId: string): boolean {
+  if (state.tabsOf(containerId).length) return true; // already has rules
+  return fits(buildRules({
+    containers: ruleInputs({ tabId: 0, containerId }),
+    knownTabIds: state.knownTabIds(),
+    noServiceWorkerHosts: serviceWorkerHosts(),
+  }));
+}
+
+/**
+ * Builds the rules; if they don't fit, the least recently used containers lose
+ * their cookie rules (their tabs then send no cookies: signed out, not leaked).
+ */
+function buildWithinBudget(): chrome.declarativeNetRequest.Rule[] {
+  const inputs = ruleInputs();
+  const knownTabIds = state.knownTabIds();
+  const noServiceWorkerHosts = serviceWorkerHosts();
+  let rules = buildRules({ containers: inputs, knownTabIds, noServiceWorkerHosts });
+  const dropped: string[] = [];
+  const byAge = inputs.filter((c) => c.tabIds.length).sort((a, b) => state.lastUsedAt(a.id) - state.lastUsedAt(b.id));
+  while (!fits(rules) && byAge.length) {
+    const victim = byAge.shift()!;
+    victim.cookies = [];
+    dropped.push(state.getContainer(victim.id)?.name ?? victim.id);
+    rules = buildRules({ containers: inputs, knownTabIds, noServiceWorkerHosts });
+  }
+  if (dropped.join() !== stats.overBudget.join()) {
+    stats.overBudget = dropped;
+    void chrome.action.setBadgeText({ text: dropped.length ? "!" : "" });
+    void chrome.action.setTitle({
+      title: dropped.length
+        ? `Too many open containers for Chrome's rule limit; signed out until you close some: ${dropped.join(", ")}`
+        : "Containers",
+    });
+  }
+  return rules;
+}
+
 async function syncRules(): Promise<void> {
   const t0 = performance.now();
-  const rules = buildRules({
-    containers: state.listContainers().map((c) => ({
-      id: c.id,
-      tabIds: state.tabsOf(c.id),
-      cookies: state.getJar(c.id),
-    })),
-    knownTabIds: state.knownTabIds(),
-  });
+  const rules = buildWithinBudget();
   try {
     const existing = await chrome.declarativeNetRequest.getSessionRules();
     await chrome.declarativeNetRequest.updateSessionRules({
@@ -172,6 +227,7 @@ async function checkStaleNavigation(details: chrome.webRequest.OnSendHeadersDeta
   await Promise.all(captures);
   const containerId = state.containerOfTab(details.tabId);
   if (!containerId) return;
+  void state.markUsed(containerId);
   const url = new URL(details.url);
   const sameSite = !details.initiator || siteOf(new URL(details.initiator).hostname) === siteOf(url.hostname);
   const expected = cookiesForUrl(state.getJar(containerId), url, sameSite ? "same-site" : "cross-site-navigation");
@@ -288,6 +344,12 @@ async function onRequestError(details: chrome.webRequest.OnErrorOccurredDetails)
   }
 }
 
+chrome.tabs.onActivated.addListener(({ tabId }) => void (async () => {
+  await startup;
+  const containerId = state.containerOfTab(tabId);
+  if (containerId) await state.markUsed(containerId);
+})());
+
 chrome.tabs.onRemoved.addListener((tabId) => void (async () => {
   await startup;
   logEvent("removed", { tabId, containerId: state.containerOfTab(tabId) ?? null });
@@ -328,28 +390,119 @@ async function replayIfBlocked(tabId: number): Promise<void> {
 /** Container whose name and colour match the tab group, if any. */
 async function containerOfGroup(groupId: number | undefined): Promise<string | null> {
   if (groupId === undefined || groupId === chrome.tabGroups.TAB_GROUP_ID_NONE) return null;
+  const owner = state.groupOwner(groupId);
+  if (owner && state.getContainer(owner)) return owner;
   try {
     const group = await chrome.tabGroups.get(groupId);
-    return state.listContainers().find((c) => c.name === group.title && c.color === group.color)?.id ?? null;
+    const match = state.listContainers().find((c) => c.name === group.title && c.color === group.color);
+    if (!match) return null;
+    await state.setGroupOwner(groupId, match.id);
+    return match.id;
   } catch {
     return null;
   }
 }
 
-async function groupTab(tabId: number, containerId: string): Promise<void> {
+/** Tabs the worker is moving into a group, and groups it is still naming. */
+const grouping = new Map<number, Promise<void>>();
+const namingGroups = new Set<number>();
+
+function groupTab(tabId: number, containerId: string): Promise<void> {
+  const done = groupTabNow(tabId, containerId);
+  grouping.set(tabId, done);
+  void done.finally(() => {
+    if (grouping.get(tabId) === done) grouping.delete(tabId);
+  });
+  return done;
+}
+
+async function groupTabNow(tabId: number, containerId: string): Promise<void> {
   const container = state.getContainer(containerId);
   if (!container) return;
   try {
     const tab = await chrome.tabs.get(tabId);
-    const [group] = await chrome.tabGroups.query({ windowId: tab.windowId, title: container.name });
-    if (group) {
-      await chrome.tabs.group({ groupId: group.id, tabIds: [tabId] });
-    } else {
-      const groupId = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId: tab.windowId } });
+    let groupId: number | undefined;
+    for (const owned of state.groupsOf(containerId)) {
+      const group = await chrome.tabGroups.get(owned).catch(() => null);
+      if (group?.windowId === tab.windowId) groupId = owned;
+    }
+    groupId ??= (await chrome.tabGroups.query({ windowId: tab.windowId, title: container.name }))
+      .find((g) => g.color === container.color)?.id;
+    if (groupId !== undefined) {
+      await chrome.tabs.group({ groupId, tabIds: [tabId] });
+      await state.setGroupOwner(groupId, containerId);
+      return;
+    }
+    groupId = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId: tab.windowId } });
+    namingGroups.add(groupId);
+    try {
+      await state.setGroupOwner(groupId, containerId);
       await chrome.tabGroups.update(groupId, { title: container.name, color: container.color as chrome.tabGroups.Color });
+    } finally {
+      namingGroups.delete(groupId);
     }
   } catch (e) {
     console.warn("grouping failed", e);
+  }
+}
+
+// --- Live group sync ---------------------------------------------------------
+// A tab's group is its container: dragging a tab into a container's group
+// moves it into that container, dragging it out makes it a normal tab, and
+// either way it reloads under the new identity.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.groupId !== undefined) void onTabGroupChanged(tabId);
+});
+
+async function onTabGroupChanged(tabId: number): Promise<void> {
+  await startup;
+  await grouping.get(tabId);
+  await classifying.get(tabId);
+  if (!state.isKnownTab(tabId)) return; // still being created; onTabCreated decides
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab) return;
+  const target = await containerOfGroup(tab.groupId);
+  const current = state.containerOfTab(tabId) ?? null;
+  if (target === current) return;
+  if (target && !roomFor(target)) {
+    logEvent("group-move-refused", { tabId, to: target });
+    void chrome.action.setBadgeText({ text: "!" });
+    void chrome.action.setTitle({ title: "Chrome's rule limit is full, so that tab stayed where it was. Close a container's tabs first." });
+    if (current) await groupTab(tabId, current);
+    else await chrome.tabs.ungroup(tabId).catch(() => {});
+    return;
+  }
+  logEvent("group-move", { tabId, from: current, to: target });
+  await classify(tabId, target);
+  if (/^https?:/.test(tab.url ?? "")) await chrome.tabs.reload(tabId).catch(() => {});
+}
+
+// Renaming or recolouring a container's group renames or recolours the
+// container. An empty name, or one another container already has, is put back.
+chrome.tabGroups.onUpdated.addListener((group) => void onGroupEdited(group.id));
+chrome.tabGroups.onRemoved.addListener((group) => void state.setGroupOwner(group.id, null));
+
+async function onGroupEdited(groupId: number): Promise<void> {
+  await startup;
+  if (namingGroups.has(groupId)) return;
+  const containerId = state.groupOwner(groupId);
+  const container = containerId && state.getContainer(containerId);
+  if (!container) return;
+  const group = await chrome.tabGroups.get(groupId).catch(() => null); // the event's copy may be stale
+  if (!group) return;
+  const title = (group.title ?? "").trim();
+  const nameTaken = state.listContainers().some((c) => c.id !== container.id && c.name === title);
+  const name = title && !nameTaken ? title : container.name;
+  const color = group.color as state.GroupColor;
+  if (name !== container.name || color !== container.color) {
+    await state.updateContainer(container.id, { name, color });
+    logEvent("container-edited", { containerId: container.id, name, color });
+  }
+  for (const owned of state.groupsOf(container.id)) {
+    const other = await chrome.tabGroups.get(owned).catch(() => null);
+    if (other && (other.title !== name || other.color !== color)) {
+      await chrome.tabGroups.update(owned, { title: name, color: color as chrome.tabGroups.Color }).catch(() => {});
+    }
   }
 }
 
@@ -357,6 +510,10 @@ async function groupTab(tabId: number, containerId: string): Promise<void> {
 export async function openTab(url: string, containerId: string, windowId?: number): Promise<number> {
   await startup;
   if (!state.getContainer(containerId)) throw new Error(`no container ${containerId}`);
+  if (!roomFor(containerId)) {
+    throw new Error("Chrome's rule limit is full. Close the tabs of a container you're not using, then try again.");
+  }
+  await noteContainerOrigin(url); // before the first request, so no worker answers it
   const tab = await chrome.tabs.create({ url: "about:blank", windowId });
   await classify(tab.id!, containerId);
   await chrome.tabs.update(tab.id!, { url });
@@ -473,6 +630,86 @@ const startup: Promise<{ httpTabs: number }> = state.ready
     return { httpTabs: 0 };
   });
 
+// --- Service workers for container sites -------------------------------------------
+
+const serviceWorkerHosts = () => [...new Set(state.listContainerOrigins().map((o) => new URL(o).hostname))];
+
+/** Removes the profile's service workers for these origins. */
+function removeServiceWorkers(origins: string[]): Promise<void> {
+  const web = origins.filter((o) => /^https?:/.test(o));
+  if (!web.length) return Promise.resolve();
+  return chrome.browsingData.remove({ origins: web as [string, ...string[]] }, { serviceWorkers: true }).catch((e) => {
+    console.warn("could not remove service workers", e);
+  });
+}
+
+/** First use of a site in a container: evict its service workers from normal tabs. */
+async function noteContainerOrigin(url: string): Promise<void> {
+  if (!/^https?:/.test(url)) return;
+  const origin = new URL(url).origin;
+  if (!(await state.addContainerOrigin(origin))) return;
+  logEvent("container-site", { origin });
+  // Normal pages already open on this site loaded without the marker.
+  const host = new URL(origin).hostname;
+  for (const tab of await chrome.tabs.query({})) {
+    if (tab.id === undefined || state.containerOfTab(tab.id) || !/^https?:/.test(tab.url ?? "")) continue;
+    const tabHost = new URL(tab.url!).hostname;
+    if (tabHost === host || tabHost.endsWith("." + host)) {
+      chrome.tabs.sendMessage(tab.id, { type: "mac:no-sw" }).catch(() => {});
+    }
+  }
+  await removeServiceWorkers([origin]);
+  await scheduleSync();
+}
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    if (details.tabId < 0) return;
+    void state.ready.then(() => {
+      if (state.containerOfTab(details.tabId)) void noteContainerOrigin(details.url);
+    });
+  },
+  { urls: ["<all_urls>"], types: ["main_frame", "sub_frame"] },
+);
+
+// Once per browser session, catch workers registered while we weren't looking.
+void startup.then(async () => {
+  const { swPurged } = await chrome.storage.session.get("swPurged");
+  if (swPurged) return;
+  await removeServiceWorkers(state.listContainerOrigins());
+  await chrome.storage.session.set({ swPurged: true });
+});
+
+// --- Idle reset ------------------------------------------------------------------
+
+/** A container nobody has used for this long signs out of everything. */
+const MAX_IDLE_MS = 30 * 24 * 60 * 60_000;
+
+async function resetIdleContainers(): Promise<string[]> {
+  await startup;
+  const reset: string[] = [];
+  for (const container of state.idleContainers(MAX_IDLE_MS)) {
+    await state.resetContainer(container.id);
+    reset.push(container.name);
+    logEvent("idle-reset", { containerId: container.id });
+  }
+  if (reset.length) {
+    await scheduleSync();
+    // Open pages hold the old storage prefix and cookies in memory.
+    for (const container of state.listContainers()) {
+      if (!reset.includes(container.name)) continue;
+      for (const tabId of state.tabsOf(container.id)) chrome.tabs.reload(tabId).catch(() => {});
+    }
+  }
+  return reset;
+}
+
+chrome.alarms.create("idle-reset", { periodInMinutes: 60 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "idle-reset") void resetIdleContainers();
+});
+void resetIdleContainers();
+
 // Like Chrome's "Continue where you left off": if the session came back,
 // session cookies come back with it; a fresh session starts without them.
 chrome.runtime.onStartup.addListener(() => void startup.then(async ({ httpTabs }) => {
@@ -492,6 +729,9 @@ Object.assign(globalThis, {
     getJar: state.getJar,
     containerOfTab: state.containerOfTab,
     rules: () => chrome.declarativeNetRequest.getSessionRules(),
+    setLimits: (next: Partial<typeof limits>) => Object.assign(limits, next),
+    backdateUse: state.backdateUse,
+    resetIdleContainers,
     buildId: __BUILD_ID__,
     listContainers: state.listContainers,
     events: () => events,

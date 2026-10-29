@@ -44,6 +44,7 @@ async function refresh(): Promise<void> {
 
 chrome.runtime.onMessage.addListener((msg: { type?: string }) => {
   if (msg.type === "mac:jar-changed") void refresh();
+  if (msg.type === "mac:no-sw") toMain({ type: "no-sw" });
 });
 
 // The navigation-time snapshot can be stale (e.g. Strict cookies are left off a

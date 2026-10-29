@@ -8,6 +8,11 @@
 // cookies of every less specific scope, skipping empty sets is safe: the
 // request falls through to the per-container "remove Cookie" fallback.
 //
+// Budget: Chrome allows 5,000 session rules but only 1,000 regex rules. Root
+// paths (nearly every cookie) use plain URL patterns; only cookies scoped to a
+// deeper path need a regex. Site contexts whose cookie sets are identical are
+// merged into one rule.
+//
 // Unclassified tabs are handled by two rules working together: a persistent
 // dynamic LOCKDOWN rule blocks everything, and a session rule allows the tabs
 // the worker knows about. Session rules vanish on browser restart and on
@@ -24,12 +29,14 @@ import {
   sameSiteAllows,
   serialize,
 } from "../shared/cookie.ts";
-import { MARKER, SNAPSHOT } from "../shared/messages.ts";
+import { MARKER, NO_SW, SNAPSHOT } from "../shared/messages.ts";
 
 type Rule = chrome.declarativeNetRequest.Rule;
 
 export interface ContainerRuleInput {
   id: string;
+  /** Prefix the page shim uses for this container's site storage. */
+  storageId?: string;
   tabIds: number[];
   cookies: Cookie[];
 }
@@ -38,6 +45,8 @@ export interface RuleBuildInput {
   containers: ContainerRuleInput[];
   /** Every tab the worker has classified (container or default). */
   knownTabIds: number[];
+  /** Hosts whose normal-tab pages must not register service workers. */
+  noServiceWorkerHosts?: string[];
   now?: number;
 }
 
@@ -52,6 +61,39 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function pathRe(path: string): string {
   if (path === "/") return "/";
   return escapeRe(path) + (path.endsWith("/") ? "" : "([/?]|$)");
+}
+
+const SECURE_SCHEMES = ["https", "wss"];
+const INSECURE_SCHEMES = ["http", "ws"];
+
+/**
+ * Conditions matching requests to `scope` under `path` over `schemes`. Several
+ * conditions mean several rules with the same action.
+ */
+function matchConditions(
+  scope: Scope,
+  path: string,
+  schemes: string[],
+): Partial<chrome.declarativeNetRequest.RuleCondition>[] {
+  const allSchemes = schemes.length === SECURE_SCHEMES.length + INSECURE_SCHEMES.length;
+  if (path !== "/") {
+    const hostRe = scope.exact ? escapeRe(scope.host) : `([^/:?#]*\\.)?${escapeRe(scope.host)}`;
+    return [{ regexFilter: `^(${schemes.join("|")})://${hostRe}(:[0-9]+)?${pathRe(path)}`, isUrlFilterCaseSensitive: true }];
+  }
+  if (scope.exact) {
+    // "^" after the host matches "/" or ":", so this is exactly this host, any port.
+    return schemes.map((scheme) => ({ urlFilter: `|${scheme}://${scope.host}^` }));
+  }
+  // requestDomains matches the domain and every subdomain, as domain cookies do.
+  if (allSchemes) return [{ requestDomains: [scope.host] }];
+  return schemes.map((scheme) => ({ requestDomains: [scope.host], urlFilter: `|${scheme}://` }));
+}
+
+const sameSet = (a: Cookie[], b: Cookie[]) => a.length === b.length && a.every((c) => b.includes(c));
+
+/** Rules and regex rules a rule list uses, for checking against Chrome's limits. */
+export function ruleUsage(rules: Rule[]): { total: number; regex: number } {
+  return { total: rules.length, regex: rules.filter((r) => r.condition.regexFilter).length };
 }
 
 interface Scope {
@@ -120,7 +162,7 @@ export const LOCKDOWN_RULE: Rule = {
   condition: { resourceTypes: ALL_TYPES },
 };
 
-export function buildRules({ containers, knownTabIds, now = Date.now() }: RuleBuildInput): Rule[] {
+export function buildRules({ containers, knownTabIds, noServiceWorkerHosts = [], now = Date.now() }: RuleBuildInput): Rule[] {
   const rules: Rule[] = [];
   let id = 1;
   const allContainerTabs = containers.flatMap((c) => c.tabIds);
@@ -155,6 +197,31 @@ export function buildRules({ containers, knownTabIds, now = Date.now() }: RuleBu
     });
   }
 
+  // A service worker's fetches carry no tab id, so DNR can't give them a
+  // container's cookies: a worker registered from a normal tab would answer for
+  // container tabs with the normal identity. Normal-tab pages of sites used in
+  // containers are told (via Server-Timing, read by the page shim) not to
+  // register one; existing ones are removed by the worker.
+  if (noServiceWorkerHosts.length) {
+    rules.push({
+      id: id++,
+      priority: P_FALLBACK,
+      action: {
+        type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
+        responseHeaders: [{
+          header: "server-timing",
+          operation: "append" as chrome.declarativeNetRequest.HeaderOperation,
+          value: `${NO_SW};desc="1"`,
+        }],
+      },
+      condition: {
+        requestDomains: noServiceWorkerHosts,
+        ...(allContainerTabs.length && { excludedTabIds: allContainerTabs }),
+        resourceTypes: ["main_frame", "sub_frame"] as chrome.declarativeNetRequest.ResourceType[],
+      },
+    });
+  }
+
   for (const container of containers) {
     if (!container.tabIds.length) continue;
 
@@ -166,7 +233,7 @@ export function buildRules({ containers, knownTabIds, now = Date.now() }: RuleBu
         responseHeaders: [{
           header: "server-timing",
           operation: "append" as chrome.declarativeNetRequest.HeaderOperation,
-          value: `${MARKER};desc="${encodeURIComponent(container.id)}"`,
+          value: `${MARKER};desc="${encodeURIComponent(container.storageId ?? container.id)}"`,
         }],
       },
       condition: {
@@ -185,48 +252,55 @@ export function buildRules({ containers, knownTabIds, now = Date.now() }: RuleBu
     for (const scope of scopes.values()) {
       const applicable = scopeCookies(scope, live);
       const specificity = scope.host.split(".").length * 2 + (scope.exact ? 1 : 0);
-      const hostRe = scope.exact ? escapeRe(scope.host) : `([^/:?#]*\\.)?${escapeRe(scope.host)}`;
       const paths = new Set(["/", ...applicable.map((c) => c.path)]);
       const localhost = isLocalhost(scope.host);
 
       for (const path of paths) {
         const pathCookies = applicable.filter((c) => pathMatch(path, c.path));
-        const anySecure = pathCookies.some((c) => c.secure) && !localhost;
-        const schemes = anySecure ? ["https", "http"] : ["https?"];
+        // Secure cookies stay off http:// and ws:// (except on localhost, as in Chrome).
+        const variants = pathCookies.some((c) => c.secure) && !localhost
+          ? [
+            { schemes: SECURE_SCHEMES, cookies: pathCookies },
+            { schemes: INSECURE_SCHEMES, cookies: pathCookies.filter((c) => !c.secure) },
+          ]
+          : [{ schemes: [...SECURE_SCHEMES, ...INSECURE_SCHEMES], cookies: pathCookies }];
 
-        for (const scheme of schemes) {
-          const schemeCookies = scheme === "http" ? pathCookies.filter((c) => !c.secure) : pathCookies;
+        for (const { schemes, cookies: schemeCookies } of variants) {
+          const [same, laxNav, cross] = CONTEXTS.map((t) => ({
+            ...t,
+            cookies: schemeCookies.filter((c) => sameSiteAllows(c, t.ctx)),
+          }));
+          // cross ⊆ laxNav ⊆ same. Equal sets need no site-context split.
+          const tiers = sameSet(same.cookies, cross.cookies)
+            ? [{ ...same, condition: {} }]
+            : sameSet(laxNav.cookies, cross.cookies) ? [same, cross] : [same, laxNav, cross];
 
-          for (const { ctx, bonus, condition } of CONTEXTS) {
-            const cookies = schemeCookies.filter((c) => sameSiteAllows(c, ctx));
+          for (const { cookies, bonus, condition } of tiers) {
             if (!cookies.length) continue;
             const snapshot = encodeSnapshot(cookies);
-            rules.push({
-              id: id++,
-              priority: P_FALLBACK + 10 + specificity * 100_000 + Math.min(path.length, 9_999) * 10 + bonus,
-              action: {
-                type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
-                requestHeaders: [{
-                  header: "cookie",
-                  operation: "set" as chrome.declarativeNetRequest.HeaderOperation,
-                  value: serialize(cookies),
+            const action: chrome.declarativeNetRequest.RuleAction = {
+              type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
+              requestHeaders: [{
+                header: "cookie",
+                operation: "set" as chrome.declarativeNetRequest.HeaderOperation,
+                value: serialize(cookies),
+              }],
+              ...(snapshot !== encodeURIComponent("[]") && {
+                responseHeaders: [{
+                  header: "server-timing",
+                  operation: "append" as chrome.declarativeNetRequest.HeaderOperation,
+                  value: `${SNAPSHOT};desc="${snapshot}"`,
                 }],
-                ...(snapshot !== encodeURIComponent("[]") && {
-                  responseHeaders: [{
-                    header: "server-timing",
-                    operation: "append" as chrome.declarativeNetRequest.HeaderOperation,
-                    value: `${SNAPSHOT};desc="${snapshot}"`,
-                  }],
-                }),
-              },
-              condition: {
-                regexFilter: `^${scheme}://${hostRe}(:[0-9]+)?${pathRe(path)}`,
-                isUrlFilterCaseSensitive: true,
-                tabIds: container.tabIds,
-                resourceTypes: ALL_TYPES,
-                ...condition,
-              },
-            });
+              }),
+            };
+            for (const match of matchConditions(scope, path, schemes)) {
+              rules.push({
+                id: id++,
+                priority: P_FALLBACK + 10 + specificity * 100_000 + Math.min(path.length, 9_999) * 10 + bonus,
+                action,
+                condition: { tabIds: container.tabIds, resourceTypes: ALL_TYPES, ...match, ...condition },
+              });
+            }
           }
         }
       }

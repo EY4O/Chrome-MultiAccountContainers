@@ -31,7 +31,8 @@ async function render(): Promise<void> {
     const open = document.createElement("button");
     open.textContent = "Open tab";
     open.onclick = async () => {
-      await send({ type: "mac:open", id: c.id, url: "about:blank", windowId: tab?.windowId });
+      const opened = await send<{ error?: string }>({ type: "mac:open", id: c.id, url: "about:blank", windowId: tab?.windowId });
+      if (opened?.error) return alert(opened.error);
       window.close();
     };
     const del = document.createElement("button");

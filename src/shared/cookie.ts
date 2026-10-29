@@ -58,7 +58,7 @@ export function isExpired(cookie: Cookie, now = Date.now()): boolean {
 export function parseSetCookie(header: string, url: URL, opts: ParseOptions = {}): Cookie | null {
   const now = opts.now ?? Date.now();
   const host = url.hostname.toLowerCase();
-  const secureContext = url.protocol === "https:" || isLocalhost(host);
+  const secureContext = url.protocol === "https:" || url.protocol === "wss:" || isLocalhost(host);
 
   const [pair, ...attrs] = header.split(";");
   const eq = pair.indexOf("=");
@@ -185,7 +185,7 @@ export function sameSiteAllows(cookie: Cookie, ctx: SiteContext): boolean {
 /** Cookies a request to `url` would carry, as the browser would compute them. */
 export function cookiesForUrl(jar: Cookie[], url: URL, ctx: SiteContext, now = Date.now()): Cookie[] {
   const host = url.hostname.toLowerCase();
-  const secureOk = url.protocol === "https:" || isLocalhost(host);
+  const secureOk = url.protocol === "https:" || url.protocol === "wss:" || isLocalhost(host);
   return jar.filter(
     (c) =>
       !isExpired(c, now) &&

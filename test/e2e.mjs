@@ -254,6 +254,75 @@ try {
   });
   measure("mean fetch latency, ms (default vs container)", { default: await fetchCost(dflt), container: await fetchCost(p2) });
 
+  // --- Phase 2: encryption at rest ------------------------------------------------
+  const stored = await sw.evaluate((id) => chrome.storage.local.get(`jar:${id}`), c1.id);
+  const sealedJar = stored[`jar:${c1.id}`];
+  check("container cookies are encrypted at rest",
+    sealedJar?.v === 1 && sealedJar.iv && !JSON.stringify(sealedJar).includes("sid"), sealedJar);
+
+  // --- Phase 2: live group sync ------------------------------------------------------
+  const tabIdOf = (url) => sw.evaluate(async (url) => (await chrome.tabs.query({})).find((t) => t.url === url)?.id, url);
+  const groupOf = (tabId) => sw.evaluate(async (tabId) => (await chrome.tabs.get(tabId)).groupId, tabId);
+  const reloadedCookie = async (page) => {
+    await sleep(1500); // the worker reloads the tab under its new identity
+    await page.waitForFunction(() => document.readyState === "complete" && window.__serverCookie !== undefined);
+    return page.evaluate(() => window.__serverCookie);
+  };
+  const p1Group = await groupOf(await tabIdOf(p1.url()));
+  const mover = await openDefault("a");
+  const moverId = await tabIdOf(mover.url());
+  await sw.evaluate((tabId, groupId) => chrome.tabs.group({ tabIds: [tabId], groupId }), moverId, p1Group);
+  const inside = await reloadedCookie(mover);
+  check("dragging a normal tab into a container's group moves it into that container",
+    inside.includes("sid=one") && (await sw.evaluate((t) => globalThis.mac.containerOfTab(t), moverId)) === c1.id, inside);
+  await sw.evaluate((tabId) => chrome.tabs.ungroup(tabId), moverId);
+  const outside = await reloadedCookie(mover);
+  check("dragging it out makes it a normal tab again",
+    outside === "sid=default" && !(await sw.evaluate((t) => globalThis.mac.containerOfTab(t), moverId)), outside);
+
+  const containerNamed = (id) => sw.evaluate((id) => globalThis.mac.listContainers().find((c) => c.id === id), id);
+  await sw.evaluate((g) => chrome.tabGroups.update(g, { title: "Personal 2" }), p1Group);
+  await sleep(500);
+  check("renaming a container's group renames the container", (await containerNamed(c1.id)).name === "Personal 2", await containerNamed(c1.id));
+  await sw.evaluate((g) => chrome.tabGroups.update(g, { title: "Work" }), p1Group);
+  await sleep(500);
+  const afterDup = await sw.evaluate(async (g) => (await chrome.tabGroups.get(g)).title, p1Group);
+  check("a name another container already has is put back", afterDup === "Personal 2" && (await containerNamed(c1.id)).name === "Personal 2", afterDup);
+  await sw.evaluate((g) => chrome.tabGroups.update(g, { color: "green" }), p1Group);
+  await sleep(500);
+  check("recolouring the group recolours the container", (await containerNamed(c1.id)).color === "green", await containerNamed(c1.id));
+
+  // --- Phase 2: service workers -------------------------------------------------------
+  const register = (page) => page.evaluate(() => navigator.serviceWorker.register("/sw.js").then(() => "registered", (e) => e.name));
+  check("a normal tab can't register a service worker for a site used in containers", (await register(dflt)) === "SecurityError", await register(dflt));
+  const swPage = await openDefault("fresh");
+  check("a normal tab on a site never used in a container can still register one", (await register(swPage)) === "registered", await register(swPage));
+  await openIn(c2.id, "fresh");
+  await sleep(500);
+  await reopen(swPage, "fresh");
+  const regs = await swPage.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
+  check("using that site in a container removes its service worker from normal tabs", regs === 0, regs);
+  check("...and stops normal tabs registering a new one", (await register(swPage)) === "SecurityError", await register(swPage));
+
+  // --- Phase 2: rule budget -----------------------------------------------------------
+  const spare = await sw.evaluate(() => globalThis.mac.createContainer("Spare", "grey"));
+  const used = (await sw.evaluate(() => globalThis.mac.rules())).length;
+  await sw.evaluate((n) => globalThis.mac.setLimits({ total: n }), used);
+  const refused = await sw.evaluate((url, id) => globalThis.mac.openTab(url, id).then(() => "opened", (e) => e.message), u("a", "/page?spare"), spare.id);
+  await sw.evaluate(() => globalThis.mac.setLimits({ total: 5000 }));
+  check("a new container tab is refused when Chrome's rule limit is full", /rule limit/.test(refused), refused);
+
+  // --- Phase 2: 30-day idle reset (simulated) -----------------------------------------
+  await sw.evaluate((id) => globalThis.mac.backdateUse(id, 31 * 24 * 60 * 60_000), c2.id);
+  const reset = await sw.evaluate(() => globalThis.mac.resetIdleContainers());
+  check("a container unused for 30 days is reset", reset.includes("Work"), reset);
+  await reopen(p2, "a");
+  const afterReset = await p2.evaluate(() => ({ server: window.__serverCookie, ls: localStorage.getItem("who"), early: window.__early.cookie }));
+  check("after a reset the container is signed out of cookies and site storage",
+    afterReset.server === "" && afterReset.ls === null && afterReset.early === "", afterReset);
+  check("the reset container keeps its name", (await containerNamed(c2.id)).name === "Work", await containerNamed(c2.id));
+  check("other containers are untouched by the reset", (await echo(p1)).includes("sid=one"), await echo(p1));
+
   const rules = await sw.evaluate(() => globalThis.mac.rules());
   measure("session rules installed", { total: rules.length, regex: rules.filter((r) => r.condition.regexFilter).length });
 } catch (e) {

@@ -20,6 +20,8 @@ export type BgMessage =
 /** Server-Timing entry names the DNR rules append to container documents. */
 export const MARKER = "__macc";
 export const SNAPSHOT = "__macj";
+/** On normal-tab pages of sites used in containers: no service workers here. */
+export const NO_SW = "__macnosw";
 
 /** CustomEvent names used between the ISOLATED and MAIN worlds (JSON details). */
 export const EV_TO_ISOLATED = "__mac_to_isolated";
@@ -31,4 +33,5 @@ export type ToIsolated =
 
 export type ToMain =
   | { type: "snapshot"; cookies: SnapshotCookie[] }
-  | { type: "ack"; id: number };
+  | { type: "ack"; id: number }
+  | { type: "no-sw" };

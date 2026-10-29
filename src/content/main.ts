@@ -15,6 +15,7 @@ import {
   EV_TO_ISOLATED,
   EV_TO_MAIN,
   MARKER,
+  NO_SW,
   SNAPSHOT,
   type SnapshotCookie,
   type ToIsolated,
@@ -26,6 +27,8 @@ const STATE = Symbol.for("__mac_state");
 
 interface ShimState {
   container: string | null;
+  /** A normal-tab page of a site that is used in containers. */
+  noServiceWorker?: boolean;
   url: string;
   cookies: SnapshotCookie[];
 }
@@ -52,6 +55,7 @@ function detect(): ShimState {
   for (const t of entries) {
     if (t.name === MARKER) state.container = decodeURIComponent(t.description);
     else if (t.name === SNAPSHOT) state.cookies = JSON.parse(decodeURIComponent(t.description));
+    else if (t.name === NO_SW) state.noServiceWorker = true;
   }
   return state;
 }
@@ -66,7 +70,7 @@ Object.defineProperty(PerformanceResourceTiming.prototype, "serverTiming", {
   ...timingDesc,
   get(this: PerformanceResourceTiming) {
     return (timingDesc.get!.call(this) as PerformanceServerTiming[]).filter(
-      (t) => t.name !== MARKER && t.name !== SNAPSHOT,
+      (t) => t.name !== MARKER && t.name !== SNAPSHOT && t.name !== NO_SW,
     );
   },
 });
@@ -213,7 +217,7 @@ if (state.container) {
   document.addEventListener(EV_TO_MAIN, (e) => {
     const msg = JSON.parse((e as CustomEvent<string>).detail) as ToMain;
     if (msg.type === "snapshot") state.cookies = msg.cookies;
-    else waiting.get(msg.id)?.();
+    else if (msg.type === "ack") waiting.get(msg.id)?.();
   });
 
   /** document.cookie writes the worker has not yet turned into rules. */
@@ -291,11 +295,24 @@ if (state.container) {
   delete (window as { cookieStore?: unknown }).cookieStore;
   if ("cookieStore" in window) Object.defineProperty(window, "cookieStore", { value: undefined, configurable: true });
 
-  // A service worker's own fetches carry no tab id, so DNR can't give them the
-  // container's cookies. Refuse new registrations from container documents.
-  if (typeof ServiceWorkerContainer !== "undefined") {
-    ServiceWorkerContainer.prototype.register = function () {
-      return Promise.reject(new DOMException("Service workers are disabled in containers", "SecurityError"));
-    };
-  }
+}
+
+// A service worker's own fetches carry no tab id, so DNR can't give them a
+// container's cookies, and one registered from either side would serve the
+// other side's tabs. No registrations from container pages, nor from normal
+// pages of sites that are used in containers.
+function refuseServiceWorkers(): void {
+  if (typeof ServiceWorkerContainer === "undefined") return;
+  ServiceWorkerContainer.prototype.register = function () {
+    return Promise.reject(new DOMException("Service workers are disabled for sites used in containers", "SecurityError"));
+  };
+}
+
+if (state.container || state.noServiceWorker) {
+  refuseServiceWorkers();
+} else {
+  // A normal page that was already open when its site was first used in a container.
+  document.addEventListener(EV_TO_MAIN, (e) => {
+    if ((JSON.parse((e as CustomEvent<string>).detail) as ToMain).type === "no-sw") refuseServiceWorkers();
+  });
 }

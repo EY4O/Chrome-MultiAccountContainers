@@ -5,7 +5,7 @@ isolation (separate cookies and site storage per container, in the same window)
 before porting any of Multi-Account Containers' UI.
 
 **Verdict: it's viable for everyday logins, with known gaps (listed below).** All 33
-automated isolation checks (35 now) and 7 restart checks pass, in repeated runs, in Chrome for Testing 156.
+automated isolation checks (50 now), 7 restart checks and 27 real-site sandbox checks pass, in repeated runs, in Chrome for Testing 156.
 Logging in to real sites is the next gate, and that's your manual test (see
 the end of this file).
 
@@ -35,9 +35,9 @@ the end of this file).
 
 Not handled yet, roughly from most to least important:
 
-1. **Service workers.** A worker registered from a default tab still controls that site's pages in container tabs, and its fetches carry no tab id, so they get the *real* profile cookies. Container documents can't register workers, which breaks PWAs, offline mode and push in containers.
+1. **Service workers, residual.** For sites you use in containers, normal tabs can't register service workers and existing ones are removed. That happens the first time the site is opened in a container, and again at each browser start. What remains: the very first container visit to a site can still be answered by a worker registered earlier in a normal tab, if the visit didn't come from the popup. Normal tabs also lose offline mode and push for those sites. Container pages never get service workers.
 2. **Chrome's own Google sign-in.** Stripping the sign-in headers only helps if Chrome lets extensions modify them before its sign-in code reads them. That's untested, because Chrome for Testing has no Google sign-in. The tests do confirm the headers are removed before the page sees them. To be safe, turn off **Allow Chrome sign-in** in `chrome://settings/syncSetup`.
-3. **Group membership is the record.** Dragging a container tab out of its group, or renaming or recolouring the group, has no effect until a restart. After a restart, the tab follows whatever group it's in. Containers and groups don't stay in sync while Chrome is running.
+3. **Dragging a tab to a new window** takes it out of its group, so it becomes a normal tab and reloads, consistent with "the group is the container". Dragging a whole group keeps it.
 4. **Redirects inside `fetch`/XHR.** A cookie set by a `3xx` on a subresource request is missing from the redirected request. Only top-level navigations get replayed.
 5. **XHR responses** don't get the post-response barrier, only `fetch` does. Synchronous XHR gets neither.
 6. **Unisolated state:** HTTP cache, Cache API, BroadcastChannel, SharedWorker, Web Locks, and IndexedDB used from workers. These allow cross-container tracking and some state bleed.
@@ -46,6 +46,17 @@ Not handled yet, roughly from most to least important:
 9. No Public Suffix List (it only rejects bare TLDs), no CHIPS/`Partitioned` support, and `__Host-`/`__Secure-` checks are basic.
 10. Deleting a container leaves its prefixed localStorage/IndexedDB data in each site's storage.
 11. A site that knows a container's id could spoof the `Server-Timing` marker. The id is random and hidden from pages.
+
+## Phase 2 (engine)
+
+| Item | What it does | Checked by |
+|---|---|---|
+| Rule compaction | Root-path cookie rules use plain URL patterns (`|https://host^`, `requestDomains`) instead of regex. Identical SameSite tiers are merged. WebSockets (`wss://`, `ws://`) now get their cookies, which the regex version missed. | Unit tests compare against Chrome's cookie rules across schemes, ports and look-alike domains. Sandbox: 253 rules, 30 regex (was 154 and 150). |
+| Budget limit | A new container tab is refused when its rules wouldn't fit. If open containers outgrow the limit, the least recently used ones lose their cookie rules (signed out, not leaked) and the icon shows a "!". | e2e |
+| Encryption | Jars are sealed with AES-256-GCM, one key per container. Old plain-text jars are converted on load. | Unit tests: round trip, wrong key, tampering. e2e checks there's no plain text at rest. Sandbox: existing containers converted and still signed in. |
+| 30-day reset | Hourly check (`chrome.alarms`). An unused container gets a new key, an empty jar and a new storage prefix, and its open tabs reload. Containers created before this release start their clock at first load. | e2e (simulated by backdating) |
+| Live group sync | Dragging a tab into or out of a container's group switches it and reloads it. Renaming or recolouring a container's group updates the container. An empty or duplicate name is put back. | e2e |
+| Service workers | Sites used in containers: workers are removed from the profile, and normal pages (including ones already open) refuse new registrations. | e2e |
 
 ## Running it
 
@@ -125,8 +136,8 @@ you to sign in again or for a verification code, open the sandbox with
 Not tested, because it needs those accounts, but it shapes the next phases:
 
 - **Windows / Entra ID single sign-on.** Container tabs remove the headers Chrome uses to sign in to Microsoft with the device's own work account (`x-ms-RefreshTokenCredential`, `x-ms-DeviceCredential`). Containers will never sign in as your own tenant by accident. The flip side: your own tenant's "compliant device" Conditional Access can't pass inside a container, so use a normal tab for your own tenant. Client tenants can't see your device as compliant anyway.
-- **Cookie jars on disk aren't encrypted.** Chrome encrypts its own cookies with Windows DPAPI. This extension keeps container cookies in `chrome.storage.local` in plain text. For client sessions, that should be fixed before real use: encrypt the jars, possibly with a passphrase per browser session. That's a Phase 2 decision.
-- **Rule budget.** Microsoft sign-ins touch many domains (`login.microsoftonline.com`, `*.microsoft.com`, `intune.microsoft.com`, `portal.azure.com`, `*.office.com`, SharePoint). Many client containers multiply that, and Chrome caps the extension at 1,000 pattern rules. Compacting the rules is needed before heavy use.
+- **Cookie jars are encrypted at rest** (AES-256-GCM, one key per container, stored next to the data). That keeps cookies out of plain sight in the profile, but doesn't stop someone who can read the whole profile while a key exists. A container unused for **30 days** gets a fresh key, an empty jar and a new storage prefix, which is a full sign-out. Chrome's own cookies are protected by Windows DPAPI. This doesn't match that.
+- **Rule budget.** Measured on your sandbox: a Google-heavy container costs about 125 of Chrome's 5,000 session rules, so roughly 39 such containers fit (about 13 did before Phase 2). Regex rules (1,000 allowed) are no longer the limit, at about 15 per container. Lighter sites cost far less: Discord alone is about 20 rules. When the budget is full, opening a tab in another container is refused with a message.
 - **MSAL sign-in** (Intune and most Microsoft portals) uses popups, hidden cross-site iframes to renew tokens silently, and `sessionStorage`/`localStorage` token caches. The tests already cover all three patterns.
-- **Service workers** (Outlook and Teams on the web) make the service-worker gap matter more for Microsoft 365 work.
+- **Service workers** (Outlook and Teams on the web): they're blocked in containers. Normal tabs lose them for any site you also use in a container.
 - **"Always open this site in container X"**, from Multi-Account Containers, is what makes client work practical. It belongs in the Phase 2 interface port.

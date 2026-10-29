@@ -81,6 +81,10 @@ function handler(req, res) {
         "access-control-expose-headers": "*",
       });
 
+    case "/sw.js":
+      res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-store" });
+      return res.end("self.addEventListener('fetch', () => {});");
+
     case "/login":
       res.writeHead(302, { location: "/home", "cache-control": "no-store", "set-cookie": "session=auth; Path=/; HttpOnly" });
       return res.end();
