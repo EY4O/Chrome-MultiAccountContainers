@@ -464,5 +464,6 @@ Object.assign(globalThis, {
     getJar: state.getJar,
     containerOfTab: state.containerOfTab,
     rules: () => chrome.declarativeNetRequest.getSessionRules(),
+    listContainers: state.listContainers,
   },
 });

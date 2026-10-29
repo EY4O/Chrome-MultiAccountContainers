@@ -83,3 +83,47 @@ Set `HEADFUL=1` to watch it run.
 
 If something breaks, the worker's counters help: open `chrome://extensions` →
 "service worker" → console, then run `mac.stats` and `await mac.rules()`.
+
+## Sandbox testing with real accounts
+
+The automated suites only see local test sites. For real sites, the `sandbox/`
+scripts drive **your installed Chrome** on a throwaway profile folder
+(`.sandbox-profile/`, ignored by git). That folder shares nothing with your
+real profile, and deleting it wipes everything. You create the test accounts
+and sign in yourself. The scripts never type credentials.
+
+One-time setup:
+
+1. Run `npm run build`, then `npm run sandbox`. This opens the sandbox Chrome with nothing attached, so signing in works normally.
+2. Follow the steps it prints: load `dist/` with Load unpacked, create one container per test account, and sign each account in to its own container. Leave normal tabs signed out.
+3. Copy `sandbox/scenarios.example.json` to `sandbox/scenarios.json` (ignored by git). For each site, set the container names and a piece of text each account shows on screen, such as the Gmail address or the Discord or GitHub username.
+4. Close the sandbox Chrome.
+
+Then, any time (Chrome must be closed):
+
+```bash
+npm run sandbox:test
+```
+
+This relaunches the sandbox with a debugging port that only this machine can
+reach, and checks four things:
+- each container shows only its own account,
+- normal tabs show none of them,
+- `chrome://signin-internals` lists none of them,
+- after a close-and-restore, restored tabs keep their accounts and a fresh normal tab still shows none.
+
+Results go to `test-results/sandbox.json`. Unpacked extensions are reloaded
+from `dist/` every time Chrome starts, so rebuild before a run. If a site asks
+you to sign in again or for a verification code, open the sandbox with
+`npm run sandbox` and deal with it by hand.
+
+## Planning for work use (Autotask, Intune, client tenants)
+
+Not tested, because it needs those accounts, but it shapes the next phases:
+
+- **Windows / Entra ID single sign-on.** Container tabs remove the headers Chrome uses to sign in to Microsoft with the device's own work account (`x-ms-RefreshTokenCredential`, `x-ms-DeviceCredential`). Containers will never sign in as your own tenant by accident. The flip side: your own tenant's "compliant device" Conditional Access can't pass inside a container, so use a normal tab for your own tenant. Client tenants can't see your device as compliant anyway.
+- **Cookie jars on disk aren't encrypted.** Chrome encrypts its own cookies with Windows DPAPI. This extension keeps container cookies in `chrome.storage.local` in plain text. For client sessions, that should be fixed before real use: encrypt the jars, possibly with a passphrase per browser session. That's a Phase 2 decision.
+- **Rule budget.** Microsoft sign-ins touch many domains (`login.microsoftonline.com`, `*.microsoft.com`, `intune.microsoft.com`, `portal.azure.com`, `*.office.com`, SharePoint). Many client containers multiply that, and Chrome caps the extension at 1,000 pattern rules. Compacting the rules is needed before heavy use.
+- **MSAL sign-in** (Intune and most Microsoft portals) uses popups, hidden cross-site iframes to renew tokens silently, and `sessionStorage`/`localStorage` token caches. The tests already cover all three patterns.
+- **Service workers** (Outlook and Teams on the web) make the service-worker gap matter more for Microsoft 365 work.
+- **"Always open this site in container X"**, from Multi-Account Containers, is what makes client work practical. It belongs in the Phase 2 interface port.

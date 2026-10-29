@@ -1,0 +1,28 @@
+{
+  "sites": [
+    {
+      "name": "Gmail",
+      "url": "https://mail.google.com/mail/u/0/",
+      "accounts": {
+        "Google A": "test.account.a@gmail.com",
+        "Google B": "test.account.b@gmail.com"
+      }
+    },
+    {
+      "name": "Discord",
+      "url": "https://discord.com/channels/@me",
+      "accounts": {
+        "Discord A": "testusera",
+        "Discord B": "testuserb"
+      }
+    },
+    {
+      "name": "GitHub",
+      "url": "https://github.com/",
+      "accounts": {
+        "GitHub A": "test-user-a",
+        "GitHub B": "test-user-b"
+      }
+    }
+  ]
+}

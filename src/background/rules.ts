@@ -92,8 +92,17 @@ const P_LOCKDOWN = 1;
 const P_ALLOW = 2;
 const P_FALLBACK = 3;
 
-/** Headers through which a site hands an identity to the browser itself. */
-export const BROWSER_IDENTITY_REQUEST_HEADERS = ["x-chrome-id-consistency-request", "x-chrome-connected"];
+/**
+ * Headers through which a site hands an identity to the browser itself, or the
+ * browser hands the device's identity to a site (Windows/Entra ID single
+ * sign-on adds the device's refresh token to login.microsoftonline.com).
+ */
+export const BROWSER_IDENTITY_REQUEST_HEADERS = [
+  "x-chrome-id-consistency-request",
+  "x-chrome-connected",
+  "x-ms-refreshtokencredential",
+  "x-ms-devicecredential",
+];
 export const BROWSER_IDENTITY_RESPONSE_HEADERS = [
   "x-chrome-id-consistency-response",
   "x-chrome-manage-accounts",
