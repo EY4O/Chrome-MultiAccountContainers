@@ -1,0 +1,260 @@
+// End-to-end isolation checks: loads dist/ into Chrome for Testing, drives the
+// engine through the service worker, and probes the harness from default and
+// container tabs. Run `npm run build` first.
+//
+// "check" failures fail the run; "measure" results are informational (races).
+
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import puppeteer from "puppeteer";
+import { start } from "../harness/server.mjs";
+
+const PORT = 8787;
+const u = (host, path) => `http://${host}.localhost:${PORT}${path}`;
+const enc = encodeURIComponent;
+
+const results = [];
+function check(name, ok, detail) {
+  results.push({ kind: "check", name, ok: Boolean(ok), detail });
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok ? "" : `\n      ${JSON.stringify(detail)}`}`);
+}
+function measure(name, detail) {
+  results.push({ kind: "measure", name, detail });
+  console.log(`INFO  ${name}: ${JSON.stringify(detail)}`);
+}
+
+const server = await start(PORT);
+const browser = await puppeteer.launch({
+  headless: process.env.HEADFUL ? false : true,
+  pipe: true,
+  enableExtensions: [resolve("dist")],
+  executablePath: process.env.CHROME_PATH,
+});
+
+try {
+  const swTarget = await browser.waitForTarget(
+    (t) => t.type() === "service_worker" && t.url().endsWith("/background.js"),
+    { timeout: 10_000 },
+  );
+  const sw = await swTarget.worker();
+  await sw.evaluate(() => globalThis.mac.scheduleSync());
+
+  let n = 0;
+  const fresh = (host, path) => `${u(host, path)}${path.includes("?") ? "&" : "?"}n=${++n}`;
+
+  async function pageFor(url) {
+    const target = await browser.waitForTarget((t) => t.url() === url, { timeout: 10_000 });
+    const page = await target.page();
+    await page.waitForFunction(() => document.readyState === "complete", { timeout: 10_000 });
+    return page;
+  }
+
+  async function openDefault(host, path = "/page") {
+    const page = await browser.newPage();
+    // A tab whose opener is a container tab stays quarantined until the worker
+    // rules out a page-opened tab (500 ms); don't navigate before that.
+    await sleep(700);
+    await page.goto(fresh(host, path));
+    return page;
+  }
+
+  async function openIn(containerId, host, path = "/page") {
+    const url = fresh(host, path);
+    await sw.evaluate((url, id) => globalThis.mac.openTab(url, id), url, containerId);
+    return pageFor(url);
+  }
+
+  async function reopen(page, host, path = "/page") {
+    await page.goto(fresh(host, path));
+    return page;
+  }
+
+  const get = (page, path) => page.evaluate(async (p) => (await fetch(p)).json(), path);
+  const echo = async (page, path = "/echo") => (await get(page, path)).cookie;
+  const settle = () => sleep(250);
+
+  const c1 = await sw.evaluate(() => globalThis.mac.createContainer("Personal", "blue"));
+  const c2 = await sw.evaluate(() => globalThis.mac.createContainer("Work", "red"));
+
+  // --- HTTP cookies ----------------------------------------------------------
+  const dflt = await openDefault("a");
+  await get(dflt, `/set?c=${enc("sid=default; Path=/")}`);
+  const p1 = await openIn(c1.id, "a");
+  const p2 = await openIn(c2.id, "a");
+  check("container tab does not receive the profile's cookies", (await echo(p1)) === "", await echo(p1));
+
+  await get(p1, `/set?c=${enc("sid=one; Path=/")}&c=${enc("ho=1; Path=/; HttpOnly")}`);
+  await get(p2, `/set?c=${enc("sid=two; Path=/")}`);
+  await settle();
+  check("C1 sees only its own HTTP cookies", (await echo(p1)) === "sid=one; ho=1", await echo(p1));
+  check("C2 sees only its own HTTP cookies", (await echo(p2)) === "sid=two", await echo(p2));
+  check("default tab still sees only the profile cookie", (await echo(dflt)) === "sid=default", await echo(dflt));
+
+  const realCookies = (await browser.cookies()).map((c) => `${c.name}=${c.value}`);
+  check("container cookies never reach the real cookie store", realCookies.join() === "sid=default", realCookies);
+
+  // --- document.cookie -------------------------------------------------------
+  await reopen(p1, "a");
+  const early = await p1.evaluate(() => window.__early);
+  check("document.cookie is correct in the first inline script", early.cookie === "sid=one", early);
+  check("HttpOnly cookie hidden from document.cookie but sent to server",
+    !early.cookie.includes("ho=") && (await p1.evaluate(() => window.__serverCookie)).includes("ho=1"), early);
+  check("Server-Timing markers hidden from the page", !early.serverTiming.some((s) => s.startsWith("__mac")), early.serverTiming);
+
+  const immediate = await p1.evaluate(async () => {
+    document.cookie = "js=1; path=/";
+    return { view: document.cookie, sent: (await (await fetch("/echo")).json()).cookie };
+  });
+  check("document.cookie write is visible to script immediately", immediate.view.includes("js=1"), immediate);
+  check("document.cookie write present on an immediate fetch", immediate.sent.includes("js=1"), immediate);
+  const xhrSent = await p1.evaluate(() => new Promise((ok) => {
+    document.cookie = "xhr=1; path=/";
+    const x = new XMLHttpRequest();
+    x.open("GET", "/echo");
+    x.onload = () => ok(JSON.parse(x.responseText).cookie);
+    x.send();
+  }));
+  check("document.cookie write present on an immediate async XHR", xhrSent.includes("xhr=1"), xhrSent);
+  await settle();
+  check("document.cookie write reaches the server", (await echo(p1)).includes("js=1"), await echo(p1));
+  check("document.cookie write does not leak to default", !(await echo(dflt)).includes("js="), await echo(dflt));
+  check("default tab document.cookie untouched", (await dflt.evaluate(() => document.cookie)) === "sid=default",
+    await dflt.evaluate(() => document.cookie));
+
+  // --- Set-Cookie -> next request race --------------------------------------
+  let raceHits = 0;
+  for (let i = 0; i < 10; i++) {
+    const hit = await p1.evaluate(async (i) => {
+      await fetch(`/set?c=${encodeURIComponent(`race${i}=1; Path=/`)}`);
+      return (await (await fetch("/echo")).json()).cookie.includes(`race${i}=1`);
+    }, i);
+    if (hit) raceHits++;
+  }
+  check("Set-Cookie from a fetch is visible on the very next fetch", raceHits === 10, `${raceHits}/10`);
+
+  const redirected = await get(p1, `/redirect?to=/echo&c=${enc("rd=1; Path=/")}`);
+  measure("cookie set by a redirect present on the redirected request", redirected.cookie.includes("rd=1"));
+  await settle();
+  check("cookie set by a redirect is captured", (await echo(p1)).includes("rd=1"), await echo(p1));
+
+  // --- Login flow: 302 + Set-Cookie, then a page that hands out anonymous sessions
+  // The engine replays a navigation that went out with stale cookies, which
+  // aborts Puppeteer's own goto; that is expected.
+  await p1.goto(u("a", "/login")).catch(() => {});
+  await sleep(1000);
+  await p1.waitForFunction(() => window.__serverCookie?.includes("session=auth"), { timeout: 5000 }).catch(() => {});
+  const home = await p1.evaluate(() => window.__serverCookie);
+  const jarSession = (await sw.evaluate((id) => globalThis.mac.getJar(id), c1.id)).find((c) => c.name === "session")?.value;
+  check("login redirect: home page ends up loaded with session=auth", home.includes("session=auth"), home);
+  check("login redirect: stale page's anonymous session did not clobber the login", jarSession === "auth", jarSession);
+
+  // --- Domain and path scoping -----------------------------------------------
+  const x1 = await openIn(c1.id, "x.site");
+  await get(x1, `/set?c=${enc("dc=1; Domain=site.localhost; Path=/")}&c=${enc("p=1; Path=/app")}`);
+  await settle();
+  const y1 = await openIn(c1.id, "y.site");
+  check("domain cookie reaches a sibling subdomain in the same container", (await echo(y1)) === "dc=1", await echo(y1));
+  check("path cookie excluded outside its path", (await echo(x1)) === "dc=1", await echo(x1));
+  check("path cookie sent inside its path", (await echo(x1, "/app/echo")) === "p=1; dc=1", await echo(x1, "/app/echo"));
+  const yDefault = await openDefault("y.site");
+  check("domain cookie does not leak to default", (await echo(yDefault)) === "", await echo(yDefault));
+
+  // --- Web Storage and IndexedDB ---------------------------------------------
+  await dflt.evaluate(() => localStorage.setItem("who", "default"));
+  await p1.evaluate(() => localStorage.setItem("who", "one"));
+  await p2.evaluate(() => localStorage.setItem("who", "two"));
+  const ls = await Promise.all([dflt, p1, p2].map((p) => p.evaluate(() => localStorage.getItem("who"))));
+  check("localStorage isolated per container", ls.join() === "default,one,two", ls);
+  const dfltKeys = await dflt.evaluate(() => Object.keys(localStorage));
+  check("default tab cannot see container localStorage keys", dfltKeys.join() === "who", dfltKeys);
+  await reopen(p1, "a");
+  const early2 = await p1.evaluate(() => window.__early);
+  check("localStorage shim active in the first inline script", early2.ls === "one" && early2.lsKeys.join() === "who", early2);
+  const propAccess = await p2.evaluate(() => {
+    localStorage.viaProp = "x";
+    const r = { get: localStorage.getItem("viaProp"), keys: Object.keys(localStorage).sort(), len: localStorage.length };
+    delete localStorage.viaProp;
+    return r;
+  });
+  check("localStorage property-style access works", propAccess.get === "x" && propAccess.len === 2, propAccess);
+
+  const idbWrite = (p, value) => p.evaluate((value) => new Promise((ok, fail) => {
+    const req = indexedDB.open("db", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("kv");
+    req.onerror = () => fail(req.error);
+    req.onsuccess = () => {
+      const tx = req.result.transaction("kv", "readwrite");
+      tx.objectStore("kv").put(value, "who");
+      tx.oncomplete = () => { req.result.close(); ok(); };
+    };
+  }), value);
+  const idbRead = (p) => p.evaluate(() => new Promise((ok, fail) => {
+    const req = indexedDB.open("db", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("kv");
+    req.onerror = () => fail(req.error);
+    req.onsuccess = () => {
+      const get = req.result.transaction("kv").objectStore("kv").get("who");
+      get.onsuccess = () => { const name = req.result.name; req.result.close(); ok({ name, value: get.result ?? null }); };
+    };
+  }));
+  await idbWrite(dflt, "default");
+  await idbWrite(p1, "one");
+  await idbWrite(p2, "two");
+  const idb = await Promise.all([dflt, p1, p2].map(idbRead));
+  check("IndexedDB isolated per container", idb.map((r) => r.value).join() === "default,one,two", idb);
+  check("IDBDatabase.name shows the unprefixed name", idb.every((r) => r.name === "db"), idb);
+  const dbs = await Promise.all([dflt, p1].map((p) => p.evaluate(async () => (await indexedDB.databases()).map((d) => d.name))));
+  check("indexedDB.databases() lists only the tab's own databases", dbs.every((d) => d.join() === "db"), dbs);
+
+  // --- Child tabs, frames, service workers -----------------------------------
+  await reopen(p1, "a");
+  await p1.bringToFront(); // users click links in the active tab
+  const [childTarget] = await Promise.all([
+    browser.waitForTarget((t) => t.url().endsWith("/child"), { timeout: 10_000 }),
+    p1.click("#blank"),
+  ]);
+  const child = await childTarget.page();
+  await child.waitForFunction(() => window.__serverCookie !== undefined, { timeout: 10_000 }).catch(async (e) => {
+    const tabs = await sw.evaluate(async () =>
+      (await chrome.tabs.query({})).map((t) => [t.id, t.url, t.openerTabId, globalThis.mac.containerOfTab(t.id)]));
+    measure("child tab diagnostics", { url: child.url(), stats: await sw.evaluate(() => ({ ...globalThis.mac.stats })), tabs });
+    throw e;
+  });
+  const childCookie = await child.evaluate(() => window.__serverCookie);
+  check("target=_blank tab inherits the container", childCookie.includes("sid=one") && !childCookie.includes("default"), childCookie);
+  measure("worker stats", await sw.evaluate(() => ({ ...globalThis.mac.stats })));
+
+  const b1 = await openIn(c1.id, "b");
+  await get(b1, `/set?c=${enc("bc=1; Path=/; SameSite=None; Secure")}`);
+  await settle();
+  await reopen(p1, "a", `/frame?src=${enc(u("b", "/page"))}`);
+  await p1.waitForFunction(() => window.__frameReport !== undefined, { timeout: 10_000 });
+  const frameData = await p1.evaluate(() => window.__frameReport);
+  check("cross-site iframe gets the container's SameSite=None cookie", frameData.server === "bc=1", frameData);
+  check("cross-site iframe document.cookie served from the container", frameData.early.cookie === "bc=1", frameData);
+
+  const swResult = await p1.evaluate(() => navigator.serviceWorker.register("/sw.js").then(() => "registered", (e) => e.name));
+  check("service worker registration refused in a container", swResult === "SecurityError", swResult);
+
+  const fetchCost = (p) => p.evaluate(async () => {
+    const t0 = performance.now();
+    for (let i = 0; i < 50; i++) await (await fetch("/echo")).text();
+    return Math.round(((performance.now() - t0) / 50) * 100) / 100;
+  });
+  measure("mean fetch latency, ms (default vs container)", { default: await fetchCost(dflt), container: await fetchCost(p2) });
+
+  const rules = await sw.evaluate(() => globalThis.mac.rules());
+  measure("session rules installed", { total: rules.length, regex: rules.filter((r) => r.condition.regexFilter).length });
+} catch (e) {
+  check("suite ran to completion", false, String(e?.stack ?? e));
+} finally {
+  await browser.close();
+  server.close();
+}
+
+await mkdir("test-results", { recursive: true });
+await writeFile("test-results/e2e.json", JSON.stringify(results, null, 2));
+const failed = results.filter((r) => r.kind === "check" && !r.ok).length;
+console.log(`\n${results.filter((r) => r.kind === "check").length - failed} passed, ${failed} failed`);
+process.exit(failed ? 1 : 0);

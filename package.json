@@ -1,0 +1,21 @@
+{
+  "name": "containers-chrome-spike",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Spike: per-tab cookie and storage isolation for Chrome MV3",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/unit/",
+    "harness": "node harness/server.mjs",
+    "e2e": "node test/e2e.mjs"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.7",
+    "esbuild": "^0.28.2",
+    "puppeteer": "^25.16.0",
+    "typescript": "^7.0.2"
+  }
+}

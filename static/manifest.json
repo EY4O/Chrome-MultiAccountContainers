@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Containers for Chrome (spike)",
+  "version": "0.1.0",
+  "description": "Spike: per-tab cookie and storage isolation, in the spirit of Multi-Account Containers.",
+  "minimum_chrome_version": "121",
+  "permissions": [
+    "declarativeNetRequest",
+    "webRequest",
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "tabGroups",
+    "webNavigation"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-main.js"],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-isolated.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    }
+  ],
+  "action": {
+    "default_title": "Containers",
+    "default_popup": "popup.html"
+  },
+  "incognito": "not_allowed"
+}

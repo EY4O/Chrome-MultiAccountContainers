@@ -1,0 +1,397 @@
+// Service worker: the container engine. It owns the per-container cookie jars,
+// keeps DNR session rules in step with jars and tab assignments, and answers
+// the content scripts and the popup.
+
+import {
+  type Cookie,
+  type SiteContext,
+  applyCookie,
+  cookiesForUrl,
+  parseSetCookie,
+  siteOf,
+} from "../shared/cookie.ts";
+import type { BgMessage, SnapshotReply } from "../shared/messages.ts";
+import { buildRules } from "./rules.ts";
+import * as state from "./state.ts";
+
+export const stats = {
+  syncs: 0,
+  lastSyncMs: 0,
+  ruleCount: 0,
+  regexRuleCount: 0,
+  setCookieSeen: 0,
+  setCookieIgnored: 0,
+  renavigations: 0,
+  staleNavigations: 0,
+  lastError: "",
+};
+
+// --- Rule sync -------------------------------------------------------------
+
+let syncing: Promise<void> | null = null;
+let dirty = false;
+
+/** Coalesces bursts of changes into as few updateSessionRules calls as possible. */
+function scheduleSync(): Promise<void> {
+  dirty = true;
+  syncing ??= (async () => {
+    while (dirty) {
+      dirty = false;
+      await syncRules();
+    }
+    syncing = null;
+  })();
+  return syncing;
+}
+
+/** Resolves once in-flight Set-Cookie captures are in the jar and the rules match it. */
+async function barrier(): Promise<void> {
+  await Promise.all(captures);
+  await (syncing ?? Promise.resolve());
+}
+
+async function syncRules(): Promise<void> {
+  const t0 = performance.now();
+  const rules = buildRules({
+    containers: state.listContainers().map((c) => ({
+      id: c.id,
+      tabIds: state.tabsOf(c.id),
+      cookies: state.getJar(c.id),
+    })),
+    knownTabIds: state.knownTabIds(),
+  });
+  try {
+    const existing = await chrome.declarativeNetRequest.getSessionRules();
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: existing.map((r) => r.id),
+      addRules: rules,
+    });
+    stats.lastError = "";
+  } catch (e) {
+    stats.lastError = String(e);
+    console.error("rule sync failed", e, rules);
+  }
+  stats.syncs++;
+  stats.ruleCount = rules.length;
+  stats.regexRuleCount = rules.filter((r) => r.condition.regexFilter).length;
+  stats.lastSyncMs = Math.round(performance.now() - t0);
+}
+
+// --- Jar changes -------------------------------------------------------------
+
+const notifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+async function commitJar(containerId: string, jar: Cookie[]): Promise<void> {
+  const saved = state.setJar(containerId, jar);
+  void scheduleSync();
+  clearTimeout(notifyTimers.get(containerId));
+  notifyTimers.set(containerId, setTimeout(() => {
+    for (const tabId of state.tabsOf(containerId)) {
+      chrome.tabs.sendMessage(tabId, { type: "mac:jar-changed" }).catch(() => {});
+    }
+  }, 30));
+  await saved;
+}
+
+const captures = new Set<Promise<void>>();
+
+/** Navigations sent with stale cookies: whatever their responses set is discarded. */
+const staleRequests = new Set<string>();
+
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    const p = captureSetCookie(details).finally(() => captures.delete(p));
+    captures.add(p);
+  },
+  { urls: ["<all_urls>"] },
+  ["responseHeaders", "extraHeaders"],
+);
+
+async function captureSetCookie(details: chrome.webRequest.OnHeadersReceivedDetails): Promise<void> {
+  if (details.tabId < 0) return;
+  await state.ready;
+  const containerId = state.containerOfTab(details.tabId);
+  if (!containerId) return;
+  const headers = (details.responseHeaders ?? [])
+    .filter((h) => h.name.toLowerCase() === "set-cookie")
+    .flatMap((h) => (h.value ?? "").split("\n"));
+  if (!headers.length) return;
+  stats.setCookieSeen += headers.length;
+  if (staleRequests.has(details.requestId)) {
+    stats.setCookieIgnored += headers.length;
+    return;
+  }
+
+  const url = new URL(details.url);
+  let jar = state.getJar(containerId);
+  let changed = false;
+  for (const header of headers) {
+    const cookie = parseSetCookie(header, url);
+    const next = cookie && applyCookie(jar, cookie);
+    if (next) {
+      jar = next;
+      changed = true;
+    }
+  }
+  if (changed) await commitJar(containerId, jar);
+}
+
+// The rules lag the jar by one updateSessionRules call, so a request sent right
+// after a Set-Cookie (classically: login POST -> 302 + Set-Cookie -> GET /home)
+// can leave without the new cookie. For top-level GET navigations we notice,
+// discard whatever cookies the stale response tries to set (often a fresh
+// anonymous session that would clobber the login), and replay the navigation.
+chrome.webRequest.onSendHeaders.addListener(
+  (details) => void checkStaleNavigation(details),
+  { urls: ["<all_urls>"], types: ["main_frame"] },
+  ["requestHeaders", "extraHeaders"],
+);
+
+const replayedAt = new Map<string, number>();
+
+async function checkStaleNavigation(details: chrome.webRequest.OnSendHeadersDetails): Promise<void> {
+  if (details.tabId < 0 || details.method !== "GET") return;
+  await Promise.all(captures);
+  const containerId = state.containerOfTab(details.tabId);
+  if (!containerId) return;
+  const url = new URL(details.url);
+  const sameSite = !details.initiator || siteOf(new URL(details.initiator).hostname) === siteOf(url.hostname);
+  const expected = cookiesForUrl(state.getJar(containerId), url, sameSite ? "same-site" : "cross-site-navigation");
+  const sentHeader = details.requestHeaders?.find((h) => h.name.toLowerCase() === "cookie")?.value ?? "";
+  const sent = new Set(sentHeader.split(/;\s*/));
+  const stale = expected.some((c) => !sent.has(c.name ? `${c.name}=${c.value}` : c.value));
+  if (!stale) return;
+
+  const key = `${details.tabId} ${details.url}`;
+  if (Date.now() - (replayedAt.get(key) ?? 0) < 5000) return; // never loop
+  replayedAt.set(key, Date.now());
+  stats.staleNavigations++;
+  staleRequests.add(details.requestId);
+  setTimeout(() => staleRequests.delete(details.requestId), 60_000);
+  await barrier();
+  chrome.tabs.update(details.tabId, { url: details.url }).catch(() => {});
+}
+
+// --- Tabs ----------------------------------------------------------------------
+
+const classifiedAt = new Map<number, number>();
+const classifying = new Map<number, Promise<void>>();
+const blockedNav = new Map<number, string>();
+const renavigated = new Set<number>();
+
+/** Assigns a tab and resolves once the rules know about it. */
+function classify(tabId: number, containerId: string | null): Promise<void> {
+  const done = (async () => {
+    await state.classifyTab(tabId, containerId);
+    classifiedAt.set(tabId, Date.now());
+    await scheduleSync();
+    const url = blockedNav.get(tabId);
+    if (url) {
+      blockedNav.delete(tabId);
+      renavigate(tabId, url);
+    }
+  })();
+  classifying.set(tabId, done);
+  void done.finally(() => {
+    if (classifying.get(tabId) === done) classifying.delete(tabId);
+  });
+  return done;
+}
+
+function renavigate(tabId: number, url: string): void {
+  if (renavigated.has(tabId)) return;
+  renavigated.add(tabId);
+  stats.renavigations++;
+  chrome.tabs.update(tabId, { url }).catch(() => {});
+}
+
+chrome.tabs.onCreated.addListener((tab) => void onTabCreated(tab));
+
+// Chrome sets openerTabId on lots of tabs that a page did not open (tabs made
+// by extensions or DevTools, for instance), so a container is only inherited
+// when webNavigation confirms the page opened the tab. Until then the tab
+// stays unclassified, which keeps it quarantined.
+const awaitingNavTarget = new Map<number, ReturnType<typeof setTimeout>>();
+
+async function onTabCreated(tab: chrome.tabs.Tab): Promise<void> {
+  await state.ready;
+  if (tab.id === undefined || state.isKnownTab(tab.id)) return;
+  const tabId = tab.id;
+  const openerContainer = tab.openerTabId === undefined ? undefined : state.containerOfTab(tab.openerTabId);
+  if (!openerContainer) return classify(tabId, null);
+  awaitingNavTarget.set(tabId, setTimeout(() => {
+    awaitingNavTarget.delete(tabId);
+    if (!state.isKnownTab(tabId)) void classify(tabId, null);
+  }, 500));
+}
+
+chrome.webNavigation.onCreatedNavigationTarget.addListener((details) => void (async () => {
+  await state.ready;
+  clearTimeout(awaitingNavTarget.get(details.tabId));
+  awaitingNavTarget.delete(details.tabId);
+  if (state.isKnownTab(details.tabId)) return;
+  const containerId = state.containerOfTab(details.sourceTabId) ?? null;
+  await classify(details.tabId, containerId);
+  if (containerId) void groupTab(details.tabId, containerId);
+})());
+
+// A tab created by a container tab may start loading before we classify it;
+// the quarantine rule blocks that load and we replay it here.
+chrome.webRequest.onErrorOccurred.addListener(
+  (details) => void onRequestError(details),
+  { urls: ["<all_urls>"], types: ["main_frame"] },
+);
+
+async function onRequestError(details: chrome.webRequest.OnErrorOccurredDetails): Promise<void> {
+  if (details.tabId < 0 || details.error !== "net::ERR_BLOCKED_BY_CLIENT") return;
+  await state.ready;
+  const inProgress = classifying.get(details.tabId);
+  if (inProgress) {
+    await inProgress;
+    renavigate(details.tabId, details.url);
+  } else if (!state.isKnownTab(details.tabId)) {
+    blockedNav.set(details.tabId, details.url);
+  } else if (Date.now() - (classifiedAt.get(details.tabId) ?? 0) < 3000) {
+    renavigate(details.tabId, details.url);
+  }
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => void (async () => {
+  await state.ready;
+  classifiedAt.delete(tabId);
+  renavigated.delete(tabId);
+  await state.forgetTab(tabId);
+  await scheduleSync();
+})());
+
+chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => void (async () => {
+  await state.ready;
+  const containerId = state.containerOfTab(removedTabId) ?? null;
+  await state.forgetTab(removedTabId);
+  await classify(addedTabId, containerId);
+})());
+
+async function groupTab(tabId: number, containerId: string): Promise<void> {
+  const container = state.getContainer(containerId);
+  if (!container) return;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const [group] = await chrome.tabGroups.query({ windowId: tab.windowId, title: container.name });
+    if (group) {
+      await chrome.tabs.group({ groupId: group.id, tabIds: [tabId] });
+    } else {
+      const groupId = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId: tab.windowId } });
+      await chrome.tabGroups.update(groupId, { title: container.name, color: container.color as chrome.tabGroups.Color });
+    }
+  } catch (e) {
+    console.warn("grouping failed", e);
+  }
+}
+
+/** Opens `url` in a new tab that belongs to the container from its first request. */
+export async function openTab(url: string, containerId: string, windowId?: number): Promise<number> {
+  await state.ready;
+  if (!state.getContainer(containerId)) throw new Error(`no container ${containerId}`);
+  const tab = await chrome.tabs.create({ url: "about:blank", windowId });
+  await classify(tab.id!, containerId);
+  await chrome.tabs.update(tab.id!, { url });
+  void groupTab(tab.id!, containerId);
+  return tab.id!;
+}
+
+// --- Messages ----------------------------------------------------------------
+
+function frameUrl(sender: chrome.runtime.MessageSender, claimed?: string): URL | null {
+  if (sender.url && /^https?:/.test(sender.url)) return new URL(sender.url);
+  // about:blank / srcdoc frames report their own URL; trust the claimed one
+  // only if it has the frame's (inherited) origin.
+  if (claimed && /^https?:/.test(claimed) && new URL(claimed).origin === sender.origin) return new URL(claimed);
+  return null;
+}
+
+function snapshotFor(sender: chrome.runtime.MessageSender, claimed?: string): SnapshotReply {
+  const containerId = sender.tab?.id === undefined ? undefined : state.containerOfTab(sender.tab.id);
+  const url = frameUrl(sender, claimed);
+  if (!containerId || !url) return { container: containerId ?? null, cookies: [] };
+  const topHost = sender.tab?.url ? new URL(sender.tab.url).hostname : url.hostname;
+  const ctx: SiteContext = sender.frameId === 0 || siteOf(topHost) === siteOf(url.hostname) ? "same-site" : "cross-site";
+  const cookies = cookiesForUrl(state.getJar(containerId), url, ctx).filter((c) => !c.httpOnly);
+  return { container: containerId, cookies: cookies.map((c) => [c.name, c.value, c.expires ?? 0]) };
+}
+
+const fromExtensionPage = (sender: chrome.runtime.MessageSender) =>
+  !sender.tab && sender.url?.startsWith(chrome.runtime.getURL(""));
+
+async function handle(msg: BgMessage, sender: chrome.runtime.MessageSender): Promise<unknown> {
+  await state.ready;
+  switch (msg.type) {
+    case "mac:get-snapshot":
+      return snapshotFor(sender, msg.url);
+
+    case "mac:set-cookie": {
+      const containerId = sender.tab?.id === undefined ? undefined : state.containerOfTab(sender.tab.id);
+      const url = frameUrl(sender, msg.url);
+      if (!containerId || !url) return null;
+      const cookie = parseSetCookie(msg.cookie, url, { fromScript: true });
+      const next = cookie && applyCookie(state.getJar(containerId), cookie, { fromScript: true });
+      if (next) await commitJar(containerId, next);
+      await barrier();
+      return null;
+    }
+
+    case "mac:barrier":
+      await barrier();
+      return null;
+  }
+
+  if (!fromExtensionPage(sender)) return null;
+  switch (msg.type) {
+    case "mac:list":
+      return {
+        containers: state.listContainers(),
+        current: msg.tabId === undefined ? null : state.containerOfTab(msg.tabId) ?? null,
+      };
+    case "mac:create":
+      return state.createContainer(msg.name, msg.color);
+    case "mac:delete": {
+      const orphans = await state.deleteContainer(msg.id);
+      await scheduleSync();
+      // Their pages hold the deleted container's identity in memory; close them.
+      if (orphans.length) await chrome.tabs.remove(orphans).catch(() => {});
+      return null;
+    }
+    case "mac:open":
+      return openTab(msg.url ?? "about:blank", msg.id, msg.windowId);
+  }
+  return null;
+}
+
+chrome.runtime.onMessage.addListener((msg: BgMessage, sender, sendResponse) => {
+  handle(msg, sender).then(sendResponse, (e) => sendResponse({ error: String(e) }));
+  return true;
+});
+
+// --- Lifecycle -----------------------------------------------------------------
+
+chrome.runtime.onStartup.addListener(() => void state.ready.then(state.dropSessionCookies));
+
+void state.ready.then(async () => {
+  await state.reconcileTabs(await chrome.tabs.query({}));
+  await scheduleSync();
+});
+
+// Test hook: the e2e suite drives the engine through the worker's global scope.
+Object.assign(globalThis, {
+  mac: {
+    stats,
+    openTab,
+    scheduleSync,
+    createContainer: async (name: string, color: state.GroupColor = "blue") => {
+      await state.ready;
+      return state.createContainer(name, color);
+    },
+    getJar: state.getJar,
+    containerOfTab: state.containerOfTab,
+    rules: () => chrome.declarativeNetRequest.getSessionRules(),
+  },
+});
