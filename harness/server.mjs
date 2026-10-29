@@ -10,6 +10,8 @@
 //   GET /child                            HTML embedding the Cookie header it got
 //   GET /frame?src=<url>                  HTML with one iframe
 //   GET /redirect?to=<url>&c=<cookie>     302 that also sets a cookie
+//   GET /identity                         JSON, with the response headers Chrome
+//                                         uses to sign the browser in to Google
 //   GET /login -> 302 /home               classic login: the 302 sets session=auth;
 //                                         /home hands out session=anon to anyone
 //                                         arriving without a session
@@ -71,6 +73,13 @@ function handler(req, res) {
     case "/redirect":
       res.writeHead(302, { location: url.searchParams.get("to") ?? "/echo", "cache-control": "no-store", ...cookieHeaders });
       return res.end();
+
+    case "/identity":
+      return json(res, 200, { ok: true }, {
+        "x-chrome-id-consistency-response": "action=SIGNIN,authuser=0,authorization_code=test",
+        "sec-session-registration": '(ES256);path="/refresh";challenge="test"',
+        "access-control-expose-headers": "*",
+      });
 
     case "/login":
       res.writeHead(302, { location: "/home", "cache-control": "no-store", "set-cookie": "session=auth; Path=/; HttpOnly" });

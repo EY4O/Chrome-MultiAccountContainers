@@ -5,7 +5,7 @@ isolation (separate cookies and site storage per container, in the same window)
 before porting any of Multi-Account Containers' UI.
 
 **Verdict: it's viable for everyday logins, with known gaps (listed below).** All 33
-automated isolation checks and 7 restart checks pass, in repeated runs, in Chrome for Testing 156.
+automated isolation checks (35 now) and 7 restart checks pass, in repeated runs, in Chrome for Testing 156.
 Logging in to real sites is the next gate, and that's your manual test (see
 the end of this file).
 
@@ -15,7 +15,7 @@ the end of this file).
 |---|---|---|
 | Outgoing cookies | `declarativeNetRequest` session rules scoped by `tabIds` set the `Cookie` header from the container's jar. There's one rule per scope, path, scheme and SameSite context, and priority picks the most specific. | `src/background/rules.ts` |
 | Incoming cookies | A DNR rule strips `Set-Cookie` in container tabs. A non-blocking `webRequest.onHeadersReceived` (`extraHeaders`) still sees the original header and writes it to the jar. | `src/background/index.ts` |
-| Real profile | Container tabs never send the profile's cookies (fallback "remove Cookie" rule) and never write to them. | `rules.ts` |
+| Real profile | Container tabs never send the profile's cookies (fallback "remove Cookie" rule) and never write to them. The same rule removes the headers Google uses to sign *the browser itself* in (Chrome account consistency, device-bound session registration), which would otherwise let Chrome rebuild a container's Google login in the real cookie jar. | `rules.ts` |
 | `document.cookie` | MAIN-world shim at `document_start`. The page's container and a cookie snapshot arrive **synchronously** in a `Server-Timing` header that the DNR rules append to each container document, which can be read from the first inline script. The shim then hides these entries from the page. | `src/content/main.ts` |
 | Storage | `localStorage`, `sessionStorage` and IndexedDB keys get a `__mac_<id>__` prefix. Default tabs can't see container keys. | `main.ts` |
 | Write barrier | `fetch`/XHR wait for pending `document.cookie` writes to reach the rules. A `fetch` response isn't handed to the page until any `Set-Cookie` on it has reached the rules. | `main.ts`, `isolated.ts` |
@@ -36,15 +36,16 @@ the end of this file).
 Not handled yet, roughly from most to least important:
 
 1. **Service workers.** A worker registered from a default tab still controls that site's pages in container tabs, and its fetches carry no tab id, so they get the *real* profile cookies. Container documents can't register workers, which breaks PWAs, offline mode and push in containers.
-2. **Group membership is the record.** Dragging a container tab out of its group, or renaming or recolouring the group, has no effect until a restart. After a restart, the tab follows whatever group it's in. Containers and groups don't stay in sync while Chrome is running.
-3. **Redirects inside `fetch`/XHR.** A cookie set by a `3xx` on a subresource request is missing from the redirected request. Only top-level navigations get replayed.
-4. **XHR responses** don't get the post-response barrier, only `fetch` does. Synchronous XHR gets neither.
-5. **Unisolated state:** HTTP cache, Cache API, BroadcastChannel, SharedWorker, Web Locks, and IndexedDB used from workers. These allow cross-container tracking and some state bleed.
-6. **`credentials: "omit"`** and anonymous CORS requests still get container cookies, because DNR can't see the credentials mode.
-7. A same-origin `about:blank` iframe that's created and touched synchronously can get ahead of the shim.
-8. No Public Suffix List (it only rejects bare TLDs), no CHIPS/`Partitioned` support, and `__Host-`/`__Secure-` checks are basic.
-9. Deleting a container leaves its prefixed localStorage/IndexedDB data in each site's storage.
-10. A site that knows a container's id could spoof the `Server-Timing` marker. The id is random and hidden from pages.
+2. **Chrome's own Google sign-in.** Stripping the sign-in headers only helps if Chrome lets extensions modify them before its sign-in code reads them. That's untested, because Chrome for Testing has no Google sign-in. The tests do confirm the headers are removed before the page sees them. To be safe, turn off **Allow Chrome sign-in** in `chrome://settings/syncSetup`.
+3. **Group membership is the record.** Dragging a container tab out of its group, or renaming or recolouring the group, has no effect until a restart. After a restart, the tab follows whatever group it's in. Containers and groups don't stay in sync while Chrome is running.
+4. **Redirects inside `fetch`/XHR.** A cookie set by a `3xx` on a subresource request is missing from the redirected request. Only top-level navigations get replayed.
+5. **XHR responses** don't get the post-response barrier, only `fetch` does. Synchronous XHR gets neither.
+6. **Unisolated state:** HTTP cache, Cache API, BroadcastChannel, SharedWorker, Web Locks, and IndexedDB used from workers. These allow cross-container tracking and some state bleed.
+7. **`credentials: "omit"`** and anonymous CORS requests still get container cookies, because DNR can't see the credentials mode.
+8. A same-origin `about:blank` iframe that's created and touched synchronously can get ahead of the shim.
+9. No Public Suffix List (it only rejects bare TLDs), no CHIPS/`Partitioned` support, and `__Host-`/`__Secure-` checks are basic.
+10. Deleting a container leaves its prefixed localStorage/IndexedDB data in each site's storage.
+11. A site that knows a container's id could spoof the `Server-Timing` marker. The id is random and hidden from pages.
 
 ## Running it
 
@@ -67,10 +68,10 @@ Set `HEADFUL=1` to watch it run.
 
 ## Your manual test: real sites in your Chrome
 
-1. Run `npm run build`, open `chrome://extensions`, turn on Developer mode, then **Load unpacked** → `dist/`.
-2. Open the extension popup and create two containers, for example "Personal" and "Work".
-3. For each site below, open it from the popup in both containers and sign in to a *different* account in each. Keep a default (no container) tab signed in to a third account, or signed out.
-4. For each site, note: does login work, do both containers stay signed in after a reload, does the default tab stay unaffected, and does anything look broken.
+2. Run `npm run build`, open `chrome://extensions`, turn on Developer mode, then **Load unpacked** → `dist/`.
+3. Open the extension popup and create two containers, for example "Personal" and "Work".
+4. For each site below, open it from the popup in both containers and sign in to a *different* account in each. Keep a default (no container) tab signed in to a third account, or signed out.
+5. For each site, note: does login work, do both containers stay signed in after a reload, does the default tab stay unaffected, and does anything look broken.
 
 | Site | Why it's a good test |
 |---|---|

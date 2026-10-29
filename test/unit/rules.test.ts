@@ -65,6 +65,18 @@ test("DNR rule choice matches browser cookie semantics", () => {
   assert.equal(cookieHeaderFor(rules, 99, "https://a.example.com/", "same-site"), null, "other tabs untouched");
 });
 
+test("container tabs can't hand an identity to the browser itself", () => {
+  const rules = buildRules({ containers: [{ id: "c1", tabIds: [5], cookies: [] }], knownTabIds: [5], now });
+  const fallback = rules.find((r) => r.action.responseHeaders?.some((h) => h.header === "set-cookie"))!;
+  const removed = (list?: { header: string; operation: string }[]) =>
+    (list ?? []).filter((h) => h.operation === "remove").map((h) => h.header);
+  for (const h of ["x-chrome-id-consistency-response", "sec-session-registration", "set-cookie"]) {
+    assert.ok(removed(fallback.action.responseHeaders).includes(h), h);
+  }
+  assert.ok(removed(fallback.action.requestHeaders).includes("x-chrome-id-consistency-request"));
+  assert.deepEqual(fallback.condition.tabIds, [5], "only container tabs");
+});
+
 test("only known tabs and tabless requests escape the lockdown", () => {
   const rules = buildRules({ containers: [{ id: "c1", tabIds: [1], cookies: jarFrom([["a=1", "https://x.com/"]]) }], knownTabIds: [1, 2], now });
   const allow = rules.find((r) => r.action.type === "allow")!;

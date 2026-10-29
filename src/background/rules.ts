@@ -92,6 +92,18 @@ const P_LOCKDOWN = 1;
 const P_ALLOW = 2;
 const P_FALLBACK = 3;
 
+/** Headers through which a site hands an identity to the browser itself. */
+export const BROWSER_IDENTITY_REQUEST_HEADERS = ["x-chrome-id-consistency-request", "x-chrome-connected"];
+export const BROWSER_IDENTITY_RESPONSE_HEADERS = [
+  "x-chrome-id-consistency-response",
+  "x-chrome-manage-accounts",
+  "google-accounts-signin",
+  "google-accounts-signout",
+  "google-accounts-remove-local-account",
+  "sec-session-registration",
+  "sec-session-challenge",
+];
+
 export const LOCKDOWN_RULE: Rule = {
   id: 1,
   priority: P_LOCKDOWN,
@@ -116,14 +128,19 @@ export function buildRules({ containers, knownTabIds, now = Date.now() }: RuleBu
   });
 
   if (allContainerTabs.length) {
-    // Never let the real cookie store leak into, or be written by, a container tab.
+    // Never let the real cookie store leak into, or be written by, a container
+    // tab. That includes the browser's own identity channels: Chrome sign-in
+    // (account consistency) and device-bound session headers let Google hand
+    // the *browser* an account or a cookie-refresh session, which Chrome then
+    // turns into real-jar cookies on its own, e.g. at the next startup.
+    const remove = (header: string) => ({ header, operation: "remove" as chrome.declarativeNetRequest.HeaderOperation });
     rules.push({
       id: id++,
       priority: P_FALLBACK,
       action: {
         type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
-        requestHeaders: [{ header: "cookie", operation: "remove" as chrome.declarativeNetRequest.HeaderOperation }],
-        responseHeaders: [{ header: "set-cookie", operation: "remove" as chrome.declarativeNetRequest.HeaderOperation }],
+        requestHeaders: [...BROWSER_IDENTITY_REQUEST_HEADERS, "cookie"].map(remove),
+        responseHeaders: [...BROWSER_IDENTITY_RESPONSE_HEADERS, "set-cookie"].map(remove),
       },
       condition: { tabIds: allContainerTabs, resourceTypes: ALL_TYPES },
     });

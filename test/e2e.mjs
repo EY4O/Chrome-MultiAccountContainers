@@ -122,6 +122,16 @@ try {
   check("default tab document.cookie untouched", (await dflt.evaluate(() => document.cookie)) === "sid=default",
     await dflt.evaluate(() => document.cookie));
 
+  // --- Browser identity headers (Chrome sign-in, device-bound sessions)
+  const identityHeaders = (p) => p.evaluate(async () => {
+    const r = await fetch("/identity");
+    return [r.headers.get("x-chrome-id-consistency-response"), r.headers.get("sec-session-registration")];
+  });
+  const containerIdentity = await identityHeaders(p1);
+  check("Chrome sign-in and session-registration headers stripped in a container", containerIdentity.every((h) => h === null), containerIdentity);
+  const defaultIdentity = await identityHeaders(dflt);
+  check("the same headers untouched in a default tab", defaultIdentity.every((h) => h !== null), defaultIdentity);
+
   // --- Set-Cookie -> next request race --------------------------------------
   let raceHits = 0;
   for (let i = 0; i < 10; i++) {
