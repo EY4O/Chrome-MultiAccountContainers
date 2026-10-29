@@ -101,7 +101,7 @@ try {
   }));
   check(`a normal tab on ${new URL(normal.url()).hostname} has no service workers and can't register one`,
     sw1.registrations === 0 && sw1.register === "SecurityError", sw1);
-  info("sites kept free of service workers in normal tabs", (await sw.evaluate(() => chrome.storage.local.get("containerOrigins"))).containerOrigins);
+  info("sites kept free of service workers in normal tabs", await sw.evaluate(() => globalThis.mac.serviceWorkerHosts()));
   await normal.close();
 
   // --- Rule limit (temporary container) ------------------------------------------
@@ -146,6 +146,14 @@ try {
   check(`the anonymous identity cookies (${identity.join(", ") || "none seen"}) are new after the reset`,
     identity.length > 0 && reused.length === 0, { identity, reused, after: Object.keys(after) });
   const untouched = await sw.evaluate((ids) => globalThis.mac.listContainers().filter((c) => ids.includes(c.id)).map((c) => c.name), [A.id, B.id]);
+  // Its reloaded tab is using www.google.com again, so its record is back;
+  // deleting the container must clear it. (www.google.com itself stays
+  // covered via google.com while the Gmail containers hold google.com cookies.)
+  const recordOf = async (id) => (await sw.evaluate(() => chrome.storage.local.get("containerOrigins"))).containerOrigins?.[id];
+  info("reset container's visited sites before deletion", await recordOf(scratch.id));
+  await sw.evaluate((id) => globalThis.mac.deleteContainer(id), scratch.id);
+  temporary.splice(temporary.indexOf(scratch.id), 1);
+  check("deleting a container forgets the sites it visited", !(await recordOf(scratch.id)), await recordOf(scratch.id));
   check(`"${nameA}" and "${nameB}" were not reset`, (await accountsShown(pageA, site)).join() === nameA &&
     (await accountsShown(pageB, site)).join() === nameB && untouched.length === 2, untouched);
 } catch (e) {

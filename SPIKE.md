@@ -35,7 +35,7 @@ the end of this file).
 
 Not handled yet, roughly from most to least important:
 
-1. **Service workers, residual.** For sites you use in containers, normal tabs can't register service workers and existing ones are removed. That happens the first time the site is opened in a container, and again at each browser start. What remains: the very first container visit to a site can still be answered by a worker registered earlier in a normal tab, if the visit didn't come from the popup. Normal tabs also lose offline mode and push for those sites. Container pages never get service workers.
+1. **Service workers, residual.** Normal tabs can't register service workers for a site while a container uses it, meaning the container holds cookies for it or opened it as a page. Existing workers for that site are removed the first time a container opens it, and again at each browser start. Deleting or resetting a container forgets the pages it opened. Frames that leave no cookies, such as most ads, never count. What remains: the very first container visit to a site can still be answered by a worker registered earlier in a normal tab, if the visit didn't come from the popup. A site whose container login lives only in page storage (no cookies) is protected only while that container's opened-pages record lists it. Container pages never get service workers.
 2. **Chrome's own Google sign-in.** Stripping the sign-in headers only helps if Chrome lets extensions modify them before its sign-in code reads them. That's untested, because Chrome for Testing has no Google sign-in. The tests do confirm the headers are removed before the page sees them. To be safe, turn off **Allow Chrome sign-in** in `chrome://settings/syncSetup`.
 3. **Dragging a tab to a new window** takes it out of its group, so it becomes a normal tab and reloads, consistent with "the group is the container". Dragging a whole group keeps it.
 4. **Redirects inside `fetch`/XHR.** A cookie set by a `3xx` on a subresource request is missing from the redirected request. Only top-level navigations get replayed.
@@ -56,7 +56,7 @@ Not handled yet, roughly from most to least important:
 | Encryption | Jars are sealed with AES-256-GCM, one key per container. Old plain-text jars are converted on load. | Unit tests: round trip, wrong key, tampering. e2e checks there's no plain text at rest. Sandbox: existing containers converted and still signed in. |
 | 30-day reset | Hourly check (`chrome.alarms`). An unused container gets a new key, an empty jar and a new storage prefix, and its open tabs reload. Containers created before this release start their clock at first load. | e2e (simulated by backdating) |
 | Live group sync | Dragging a tab into or out of a container's group switches it and reloads it. Renaming or recolouring a container's group updates the container. An empty or duplicate name is put back. | e2e |
-| Service workers | Sites used in containers: workers are removed from the profile, and normal pages (including ones already open) refuse new registrations. | e2e |
+| Service workers | For sites a container uses (holds cookies for, or opened as a page), workers are removed from the profile and normal pages, including ones already open, refuse new registrations. The list forgets a container's pages when it's deleted or reset. | Unit tests, e2e, sandbox |
 
 ## Running it
 

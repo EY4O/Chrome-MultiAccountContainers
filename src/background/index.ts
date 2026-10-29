@@ -11,7 +11,7 @@ import {
   siteOf,
 } from "../shared/cookie.ts";
 import type { BgMessage, SnapshotReply } from "../shared/messages.ts";
-import { LOCKDOWN_RULE, buildRules, ruleUsage } from "./rules.ts";
+import { LOCKDOWN_RULE, buildRules, ruleUsage, serviceWorkerHosts as hostsFor } from "./rules.ts";
 import * as state from "./state.ts";
 
 export const stats = {
@@ -513,7 +513,7 @@ export async function openTab(url: string, containerId: string, windowId?: numbe
   if (!roomFor(containerId)) {
     throw new Error("Chrome's rule limit is full. Close the tabs of a container you're not using, then try again.");
   }
-  await noteContainerOrigin(url); // before the first request, so no worker answers it
+  await noteContainerOrigin(url, containerId); // before the first request, so no worker answers it
   const tab = await chrome.tabs.create({ url: "about:blank", windowId });
   await classify(tab.id!, containerId);
   await chrome.tabs.update(tab.id!, { url });
@@ -632,7 +632,8 @@ const startup: Promise<{ httpTabs: number }> = state.ready
 
 // --- Service workers for container sites -------------------------------------------
 
-const serviceWorkerHosts = () => [...new Set(state.listContainerOrigins().map((o) => new URL(o).hostname))];
+const serviceWorkerHosts = () =>
+  hostsFor(state.listContainerOrigins(), state.listContainers().map((c) => state.getJar(c.id)));
 
 /** Removes the profile's service workers for these origins. */
 function removeServiceWorkers(origins: string[]): Promise<void> {
@@ -644,10 +645,10 @@ function removeServiceWorkers(origins: string[]): Promise<void> {
 }
 
 /** First use of a site in a container: evict its service workers from normal tabs. */
-async function noteContainerOrigin(url: string): Promise<void> {
+async function noteContainerOrigin(url: string, containerId: string): Promise<void> {
   if (!/^https?:/.test(url)) return;
   const origin = new URL(url).origin;
-  if (!(await state.addContainerOrigin(origin))) return;
+  if (!(await state.addContainerOrigin(containerId, origin))) return;
   logEvent("container-site", { origin });
   // Normal pages already open on this site loaded without the marker.
   const host = new URL(origin).hostname;
@@ -666,17 +667,21 @@ chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.tabId < 0) return;
     void state.ready.then(() => {
-      if (state.containerOfTab(details.tabId)) void noteContainerOrigin(details.url);
+      const containerId = state.containerOfTab(details.tabId);
+      if (containerId) void noteContainerOrigin(details.url, containerId);
     });
   },
-  { urls: ["<all_urls>"], types: ["main_frame", "sub_frame"] },
+  // Pages only: frames that leave no cookies (ads, trackers) shouldn't cost
+  // normal tabs their service workers; frames that do are covered by cookies.
+  { urls: ["<all_urls>"], types: ["main_frame"] },
 );
 
 // Once per browser session, catch workers registered while we weren't looking.
 void startup.then(async () => {
   const { swPurged } = await chrome.storage.session.get("swPurged");
   if (swPurged) return;
-  await removeServiceWorkers(state.listContainerOrigins());
+  const cookieHosts = serviceWorkerHosts().map((h) => `https://${h}`);
+  await removeServiceWorkers([...new Set([...state.listContainerOrigins(), ...cookieHosts])]);
   await chrome.storage.session.set({ swPurged: true });
 });
 
@@ -731,6 +736,7 @@ Object.assign(globalThis, {
     rules: () => chrome.declarativeNetRequest.getSessionRules(),
     setLimits: (next: Partial<typeof limits>) => Object.assign(limits, next),
     backdateUse: state.backdateUse,
+    serviceWorkerHosts,
     deleteContainer: async (id: string) => {
       const orphans = await state.deleteContainer(id);
       await scheduleSync();

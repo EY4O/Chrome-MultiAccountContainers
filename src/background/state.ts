@@ -31,8 +31,12 @@ const keys = new Map<string, string>();
 /** containerId -> epoch ms a tab in it was last used. */
 let lastUsed: Record<string, number> = {};
 let lastUsedSaved = 0;
-/** Origins ever opened in a container; their service workers are kept out of normal tabs. */
-let containerOrigins: string[] = [];
+/**
+ * containerId -> origins it opened as pages. Together with the container's
+ * cookie domains, these are the sites kept free of service workers in normal
+ * tabs; they're forgotten when the container is deleted or reset.
+ */
+let containerOrigins: Record<string, string[]> = {};
 let session: SessionState = { tabContainer: {}, defaultTabs: [] };
 
 const jarKey = (id: string) => `jar:${id}`;
@@ -42,7 +46,9 @@ const newStorageId = () => crypto.randomUUID().slice(0, 8);
 export const ready: Promise<void> = (async () => {
   const local = await chrome.storage.local.get(["containers", "lastUsed", "containerOrigins"]);
   containers = (local.containers as Container[] | undefined) ?? [];
-  containerOrigins = (local.containerOrigins as string[] | undefined) ?? [];
+  // Before per-container tracking this was one ever-growing list; start over.
+  const storedOrigins = local.containerOrigins;
+  containerOrigins = storedOrigins && !Array.isArray(storedOrigins) ? (storedOrigins as Record<string, string[]>) : {};
   lastUsed = (local.lastUsed as Record<string, number> | undefined) ?? {};
   const stored = await chrome.storage.local.get(containers.flatMap((c) => [jarKey(c.id), keyKey(c.id)]));
   const now = Date.now();
@@ -118,6 +124,7 @@ export async function deleteContainer(id: string): Promise<number[]> {
   jars.delete(id);
   keys.delete(id);
   delete lastUsed[id];
+  await forgetContainerOrigins(id);
   const orphanTabs = tabsOf(id);
   for (const tabId of orphanTabs) delete session.tabContainer[tabId];
   await Promise.all([
@@ -154,6 +161,7 @@ export async function resetContainer(id: string): Promise<void> {
   keys.set(id, key);
   jars.set(id, []);
   lastUsed[id] = Date.now();
+  await forgetContainerOrigins(id);
   await chrome.storage.local.set({ containers, [keyKey(id)]: key, lastUsed });
   await saveJar(id);
 }
@@ -175,16 +183,26 @@ export async function markUsed(id: string, now = Date.now()): Promise<void> {
   await chrome.storage.local.set({ lastUsed });
 }
 
+/** Every origin some existing container opened as a page. */
 export function listContainerOrigins(): string[] {
-  return containerOrigins;
+  return [...new Set(Object.values(containerOrigins).flat())];
 }
 
-/** Returns true if the origin is new. */
-export async function addContainerOrigin(origin: string): Promise<boolean> {
-  if (containerOrigins.includes(origin)) return false;
-  containerOrigins = [...containerOrigins, origin];
+/** Records that a container opened an origin; true if no container had before. */
+export async function addContainerOrigin(containerId: string, origin: string): Promise<boolean> {
+  const mine = containerOrigins[containerId] ?? [];
+  if (mine.includes(origin)) return false;
+  const isNew = !listContainerOrigins().includes(origin);
+  containerOrigins = { ...containerOrigins, [containerId]: [...mine, origin] };
   await chrome.storage.local.set({ containerOrigins });
-  return true;
+  return isNew;
+}
+
+async function forgetContainerOrigins(containerId: string): Promise<void> {
+  if (!(containerId in containerOrigins)) return;
+  const { [containerId]: _, ...rest } = containerOrigins;
+  containerOrigins = rest;
+  await chrome.storage.local.set({ containerOrigins });
 }
 
 export function getJar(id: string): Cookie[] {

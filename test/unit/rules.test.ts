@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { LOCKDOWN_RULE, buildRules, ruleUsage } from "../../src/background/rules.ts";
+import { LOCKDOWN_RULE, buildRules, ruleUsage, serviceWorkerHosts } from "../../src/background/rules.ts";
 import { type Cookie, type SiteContext, cookiesForUrl, parseSetCookie, serialize } from "../../src/shared/cookie.ts";
 
 const now = 1_700_000_000_000;
@@ -134,6 +134,17 @@ test("a Google-sized jar fits in a small, mostly regex-free budget", () => {
       assert.equal(cookieHeaderFor(rules, 1, url, ctx, type), serialize(cookiesForUrl(jar, new URL(url), ctx, now)), `${url} ${ctx}`);
     }
   }
+});
+
+test("service-worker hosts come from pages opened and cookies held, nothing else", () => {
+  const jars = [
+    jarFrom([["sid=1; Domain=google.com", "https://mail.google.com/"], ["t=1", "https://discord.com/"]]),
+    jarFrom([["old=1; Max-Age=1", "https://expired.example/"]]),
+  ];
+  const hosts = serviceWorkerHosts(["https://mail.google.com", "https://intune.microsoft.com", "chrome://newtab"], jars, now + 5_000);
+  // mail.google.com is covered by google.com; the expired cookie's host is gone.
+  assert.deepEqual(hosts, ["discord.com", "google.com", "intune.microsoft.com"]);
+  assert.deepEqual(serviceWorkerHosts([], [], now), [], "nothing used, nothing listed");
 });
 
 test("only known tabs and tabless requests escape the lockdown", () => {

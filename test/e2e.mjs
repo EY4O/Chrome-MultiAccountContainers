@@ -297,7 +297,7 @@ try {
   check("a normal tab can't register a service worker for a site used in containers", (await register(dflt)) === "SecurityError", await register(dflt));
   const swPage = await openDefault("fresh");
   check("a normal tab on a site never used in a container can still register one", (await register(swPage)) === "registered", await register(swPage));
-  await openIn(c2.id, "fresh");
+  const freshInWork = await openIn(c2.id, "fresh");
   await sleep(500);
   await reopen(swPage, "fresh");
   const regs = await swPage.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
@@ -313,6 +313,7 @@ try {
   check("a new container tab is refused when Chrome's rule limit is full", /rule limit/.test(refused), refused);
 
   // --- Phase 2: 30-day idle reset (simulated) -----------------------------------------
+  await freshInWork.close(); // otherwise Work is still using fresh.localhost when it resets
   await sw.evaluate((id) => globalThis.mac.backdateUse(id, 31 * 24 * 60 * 60_000), c2.id);
   const reset = await sw.evaluate(() => globalThis.mac.resetIdleContainers());
   check("a container unused for 30 days is reset", reset.includes("Work"), reset);
@@ -322,6 +323,11 @@ try {
     afterReset.server === "" && afterReset.ls === null && afterReset.early === "", afterReset);
   check("the reset container keeps its name", (await containerNamed(c2.id)).name === "Work", await containerNamed(c2.id));
   check("other containers are untouched by the reset", (await echo(p1)).includes("sid=one"), await echo(p1));
+  await reopen(swPage, "fresh");
+  check("a site only the reset container had used gets its service workers back in normal tabs",
+    (await register(swPage)) === "registered", await register(swPage));
+  await reopen(dflt, "a");
+  check("a site another container still uses stays protected", (await register(dflt)) === "SecurityError", await register(dflt));
 
   const rules = await sw.evaluate(() => globalThis.mac.rules());
   measure("session rules installed", { total: rules.length, regex: rules.filter((r) => r.condition.regexFilter).length });

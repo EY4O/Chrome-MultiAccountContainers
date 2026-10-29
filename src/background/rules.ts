@@ -91,6 +91,19 @@ function matchConditions(
 
 const sameSet = (a: Cookie[], b: Cookie[]) => a.length === b.length && a.every((c) => b.includes(c));
 
+/**
+ * Hosts whose normal-tab pages must not register service workers: those some
+ * container opened as a page, plus those it holds cookies for. A host already
+ * covered by a parent domain in the list is dropped (requestDomains matches
+ * subdomains).
+ */
+export function serviceWorkerHosts(pageOrigins: string[], jars: Cookie[][], now = Date.now()): string[] {
+  const hosts = new Set(pageOrigins.filter((o) => /^https?:/.test(o)).map((o) => new URL(o).hostname));
+  for (const jar of jars) for (const c of jar) if (!isExpired(c, now)) hosts.add(c.domain);
+  const covered = (h: string) => [...hosts].some((d) => d !== h && h.endsWith("." + d));
+  return [...hosts].filter((h) => !covered(h)).sort();
+}
+
 /** Rules and regex rules a rule list uses, for checking against Chrome's limits. */
 export function ruleUsage(rules: Rule[]): { total: number; regex: number } {
   return { total: rules.length, regex: rules.filter((r) => r.condition.regexFilter).length };
