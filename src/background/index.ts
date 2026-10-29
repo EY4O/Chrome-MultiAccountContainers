@@ -192,6 +192,13 @@ async function checkStaleNavigation(details: chrome.webRequest.OnSendHeadersDeta
 
 // --- Tabs ----------------------------------------------------------------------
 
+/** Recent tab-lifecycle events, for diagnosing assignments (mac.events()). */
+const events: Record<string, unknown>[] = [];
+function logEvent(ev: string, data: Record<string, unknown>): void {
+  events.push({ t: new Date().toISOString().slice(11, 23), ev, ...data });
+  if (events.length > 300) events.shift();
+}
+
 const classifiedAt = new Map<number, number>();
 const classifying = new Map<number, Promise<void>>();
 const blockedNav = new Map<number, string>();
@@ -199,6 +206,7 @@ const renavigated = new Set<number>();
 
 /** Assigns a tab and resolves once the rules know about it. */
 function classify(tabId: number, containerId: string | null): Promise<void> {
+  logEvent("classify", { tabId, containerId, was: state.containerOfTab(tabId) ?? (state.isKnownTab(tabId) ? "default" : "unknown") });
   const done = (async () => {
     await state.classifyTab(tabId, containerId);
     classifiedAt.set(tabId, Date.now());
@@ -220,6 +228,7 @@ function renavigate(tabId: number, url: string): void {
   if (renavigated.has(tabId)) return;
   renavigated.add(tabId);
   stats.renavigations++;
+  logEvent("replay", { tabId, url: url.slice(0, 80) });
   chrome.tabs.update(tabId, { url }).catch(() => {});
 }
 
@@ -281,6 +290,7 @@ async function onRequestError(details: chrome.webRequest.OnErrorOccurredDetails)
 
 chrome.tabs.onRemoved.addListener((tabId) => void (async () => {
   await startup;
+  logEvent("removed", { tabId, containerId: state.containerOfTab(tabId) ?? null });
   classifiedAt.delete(tabId);
   renavigated.delete(tabId);
   await state.forgetTab(tabId);
@@ -289,10 +299,31 @@ chrome.tabs.onRemoved.addListener((tabId) => void (async () => {
 
 chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => void (async () => {
   await startup;
+  logEvent("replaced", { addedTabId, removedTabId, removedContainer: state.containerOfTab(removedTabId) ?? null,
+    addedContainer: state.containerOfTab(addedTabId) ?? null, removedKnown: state.isKnownTab(removedTabId) });
+  const removedKnown = state.isKnownTab(removedTabId);
   const containerId = state.containerOfTab(removedTabId) ?? null;
   await state.forgetTab(removedTabId);
-  await classify(addedTabId, containerId);
+  if (removedKnown) {
+    await classify(addedTabId, containerId);
+  } else if (!state.isKnownTab(addedTabId)) {
+    // Session restore swaps tabs before the worker is running; the old id
+    // never meant anything to us, so go by the replacement's group.
+    const tab = await chrome.tabs.get(addedTabId).catch(() => null);
+    await classify(addedTabId, await containerOfGroup(tab?.groupId));
+  }
+  // Otherwise startup already assigned the replacement; an unknown old id must
+  // not overwrite that. A load blocked under the old id has to be replayed on
+  // the new one.
+  await replayIfBlocked(addedTabId);
 })());
+
+/** Replays a tab's load if it ended on an error page (e.g. blocked by the lockdown). */
+async function replayIfBlocked(tabId: number): Promise<void> {
+  const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
+  const top = frames?.find((f) => f.frameId === 0);
+  if (top?.errorOccurred && /^https?:/.test(top.url)) renavigate(tabId, top.url);
+}
 
 /** Container whose name and colour match the tab group, if any. */
 async function containerOfGroup(groupId: number | undefined): Promise<string | null> {
@@ -431,11 +462,8 @@ const startup: Promise<{ httpTabs: number }> = state.ready
     }
     // Restored tabs that loaded while the extension was still starting were
     // blocked before the worker could hear about it; find their error pages.
-    for (const tabId of added) {
-      const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
-      const top = frames?.find((f) => f.frameId === 0);
-      if (top?.errorOccurred && /^https?:/.test(top.url)) renavigate(tabId, top.url);
-    }
+    for (const tabId of added) await replayIfBlocked(tabId);
+    logEvent("startup", { assigned: added.map((tabId) => [tabId, state.containerOfTab(tabId) ?? null]) });
     stats.restoredIntoContainers += added.filter((tabId) => state.containerOfTab(tabId)).length;
     return { httpTabs: tabs.filter((t) => /^https?:/.test(t.url || t.pendingUrl || "")).length };
   })
@@ -464,6 +492,8 @@ Object.assign(globalThis, {
     getJar: state.getJar,
     containerOfTab: state.containerOfTab,
     rules: () => chrome.declarativeNetRequest.getSessionRules(),
+    buildId: __BUILD_ID__,
     listContainers: state.listContainers,
+    events: () => events,
   },
 });

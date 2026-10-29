@@ -112,8 +112,11 @@ reach, and checks four things:
 - `chrome://signin-internals` lists none of them,
 - after a close-and-restore, restored tabs keep their accounts and a fresh normal tab still shows none.
 
-Results go to `test-results/sandbox.json`. Unpacked extensions are reloaded
-from `dist/` every time Chrome starts, so rebuild before a run. If a site asks
+Results go to `test-results/sandbox.json`. Chrome keeps an unpacked extension's
+worker cached across restarts, so each build writes `dist/build.json` and the
+launcher reloads the extension whenever the sandbox is running a different
+build. Run `npm run build` before testing a change. When a run fails, the
+worker's recent tab events (`mac.events()` in its console) show what happened. If a site asks
 you to sign in again or for a verification code, open the sandbox with
 `npm run sandbox` and deal with it by hand.
 

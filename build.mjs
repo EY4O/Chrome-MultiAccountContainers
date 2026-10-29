@@ -1,4 +1,4 @@
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import * as esbuild from "esbuild";
 
 const watch = process.argv.includes("--watch");
@@ -8,7 +8,19 @@ await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
 await cp("static", outdir, { recursive: true });
 
-const common = { bundle: true, target: "chrome121", outdir, logLevel: "info", sourcemap: "inline" };
+// Lets the sandbox launcher notice that Chrome is still running an older
+// worker: it caches extension worker scripts across restarts.
+const buildId = new Date().toISOString();
+await writeFile(`${outdir}/build.json`, JSON.stringify({ buildId }));
+
+const common = {
+  bundle: true,
+  target: "chrome121",
+  outdir,
+  logLevel: "info",
+  sourcemap: "inline",
+  define: { __BUILD_ID__: JSON.stringify(buildId) },
+};
 const builds = [
   { ...common, entryPoints: { background: "src/background/index.ts" }, format: "esm" },
   {

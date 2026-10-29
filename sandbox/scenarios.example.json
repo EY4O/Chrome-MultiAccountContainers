@@ -3,6 +3,7 @@
     {
       "name": "Gmail",
       "url": "https://mail.google.com/mail/u/0/",
+      "scope": "title",
       "accounts": {
         "Google A": "test.account.a@gmail.com",
         "Google B": "test.account.b@gmail.com"
@@ -11,6 +12,7 @@
     {
       "name": "Discord",
       "url": "https://discord.com/channels/@me",
+      "scope": "section[aria-label='User status and settings']",
       "accounts": {
         "Discord A": "testusera",
         "Discord B": "testuserb"

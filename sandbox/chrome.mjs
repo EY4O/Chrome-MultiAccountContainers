@@ -4,7 +4,7 @@
 // we're testing.
 
 import { spawn } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -75,7 +75,22 @@ export async function launch({ restore = false } = {}) {
     await close(browser);
     throw new Error(`The extension isn't loaded in the sandbox. Run \`npm run sandbox\` and load ${DIST} with Load unpacked.`);
   }
-  const sw = await target.worker();
+  let sw = await target.worker();
+
+  // Chrome caches an unpacked extension's worker across restarts, so a fresh
+  // build only runs after a reload.
+  const { buildId } = JSON.parse(await readFile(join(DIST, "build.json"), "utf8"));
+  if ((await sw.evaluate(() => globalThis.mac?.buildId).catch(() => null)) !== buildId) {
+    try {
+      await sw.evaluate(() => chrome.runtime.reload()).catch(() => {}); // the worker dies mid-call
+      const fresh = await browser.waitForTarget((t) => isOurWorker(t) && t !== target, { timeout: 15_000 });
+      sw = await fresh.worker();
+      if ((await sw.evaluate(() => globalThis.mac?.buildId)) !== buildId) throw new Error("Extension reload did not pick up the new build.");
+    } catch (e) {
+      await close(browser);
+      throw e;
+    }
+  }
   await sw.evaluate(() => globalThis.mac.scheduleSync());
   return { browser, sw };
 }
