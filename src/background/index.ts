@@ -731,6 +731,11 @@ Object.assign(globalThis, {
     rules: () => chrome.declarativeNetRequest.getSessionRules(),
     setLimits: (next: Partial<typeof limits>) => Object.assign(limits, next),
     backdateUse: state.backdateUse,
+    deleteContainer: async (id: string) => {
+      const orphans = await state.deleteContainer(id);
+      await scheduleSync();
+      if (orphans.length) await chrome.tabs.remove(orphans).catch(() => {});
+    },
     resetIdleContainers,
     buildId: __BUILD_ID__,
     listContainers: state.listContainers,

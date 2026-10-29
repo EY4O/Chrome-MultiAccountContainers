@@ -123,7 +123,13 @@ reach, and checks four things:
 - `chrome://signin-internals` lists none of them,
 - after a close-and-restore, restored tabs keep their accounts and a fresh normal tab still shows none.
 
-Results go to `test-results/sandbox.json`. Chrome keeps an unpacked extension's
+`npm run sandbox:phase2` checks the Phase 2 features on the first site in
+`scenarios.json`: jars encrypted at rest; dragging a tab between groups; rename,
+rejected duplicate and recolour (all put back afterwards); service workers in
+normal tabs; the rule-limit refusal; and the 30-day reset. The last two only
+touch temporary containers, which are deleted afterwards.
+
+Results go to `test-results/sandbox.json` (and `sandbox-phase2.json`). Chrome keeps an unpacked extension's
 worker cached across restarts, so each build writes `dist/build.json` and the
 launcher reloads the extension whenever the sandbox is running a different
 build. Run `npm run build` before testing a change. When a run fails, the

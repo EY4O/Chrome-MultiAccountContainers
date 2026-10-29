@@ -13,7 +13,8 @@
     "e2e": "node test/e2e.mjs",
     "e2e:restart": "node test/e2e-restart.mjs",
     "sandbox": "node sandbox/open.mjs",
-    "sandbox:test": "node sandbox/run.mjs"
+    "sandbox:test": "node sandbox/run.mjs",
+    "sandbox:phase2": "node sandbox/phase2.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.7",
