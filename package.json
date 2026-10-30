@@ -1,9 +1,14 @@
 {
-  "name": "containers-chrome-spike",
+  "name": "chrome-multiaccountcontainers",
   "version": "0.1.0",
+  "description": "Separate sign-ins per tab for Chrome: containers that keep their own cookies and site data, shown as tab groups.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EY4O/Chrome-MultiAccountContainers.git"
+  },
   "private": true,
   "type": "module",
-  "description": "Spike: per-tab cookie and storage isolation for Chrome MV3",
   "scripts": {
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
