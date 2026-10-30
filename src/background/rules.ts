@@ -47,6 +47,14 @@ export interface RuleBuildInput {
   knownTabIds: number[];
   /** Hosts whose normal-tab pages must not register service workers. */
   noServiceWorkerHosts?: string[];
+  /**
+   * Site assignments: a top-level load of one of these hosts in any tab not
+   * excluded (the container's own tabs, tabs that chose to stay) is redirected
+   * to the prompt page before it leaves the browser.
+   */
+  assignmentRedirects?: { hosts: string[]; excludedTabIds: number[] }[];
+  /** chrome-extension://.../prompt.html; the original URL follows the '#'. */
+  promptUrl?: string;
   now?: number;
 }
 
@@ -146,6 +154,10 @@ export function encodeSnapshot(cookies: Cookie[]): string {
 const P_LOCKDOWN = 1;
 const P_ALLOW = 2;
 const P_FALLBACK = 3;
+/** Above everything: an assigned site never loads in the wrong tab, even a quarantined one. */
+const P_ASSIGN = 2_000_000_000;
+/** Hosts per redirect rule, keeping each regex small. */
+const ASSIGN_CHUNK = 20;
 
 /**
  * Headers through which a site hands an identity to the browser itself, or the
@@ -175,7 +187,14 @@ export const LOCKDOWN_RULE: Rule = {
   condition: { resourceTypes: ALL_TYPES },
 };
 
-export function buildRules({ containers, knownTabIds, noServiceWorkerHosts = [], now = Date.now() }: RuleBuildInput): Rule[] {
+export function buildRules({
+  containers,
+  knownTabIds,
+  noServiceWorkerHosts = [],
+  assignmentRedirects = [],
+  promptUrl = "",
+  now = Date.now(),
+}: RuleBuildInput): Rule[] {
   const rules: Rule[] = [];
   let id = 1;
   const allContainerTabs = containers.flatMap((c) => c.tabIds);
@@ -233,6 +252,27 @@ export function buildRules({ containers, knownTabIds, noServiceWorkerHosts = [],
         resourceTypes: ["main_frame", "sub_frame"] as chrome.declarativeNetRequest.ResourceType[],
       },
     });
+  }
+
+  if (promptUrl) {
+    for (const { hosts, excludedTabIds } of assignmentRedirects) {
+      for (let i = 0; i < hosts.length; i += ASSIGN_CHUNK) {
+        const alternatives = hosts.slice(i, i + ASSIGN_CHUNK).map(escapeRe).join("|");
+        rules.push({
+          id: id++,
+          priority: P_ASSIGN,
+          action: {
+            type: "redirect" as chrome.declarativeNetRequest.RuleActionType,
+            redirect: { regexSubstitution: `${promptUrl}#\\0` },
+          },
+          condition: {
+            regexFilter: `^https?://(${alternatives})(:[0-9]+)?([/?].*)?$`,
+            resourceTypes: ["main_frame"] as chrome.declarativeNetRequest.ResourceType[],
+            ...(excludedTabIds.length && { excludedTabIds }),
+          },
+        });
+      }
+    }
   }
 
   for (const container of containers) {

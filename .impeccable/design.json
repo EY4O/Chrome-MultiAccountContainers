@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-29T00:00:00Z",
+  "title": "Design System: Containers",
+  "extensions": {
+    "colorMeta": {
+      "primary": { "role": "primary", "displayName": "Chrome Action Blue", "canonical": "#0b57d0", "dark": "#a8c7fa", "tonalRamp": ["#041e49", "#062e6f", "#0842a0", "#0b57d0", "#4c8df6", "#a8c7fa", "#d3e3fd", "#ecf3fe"] },
+      "primary-container": { "role": "primary", "displayName": "Blue Container", "canonical": "#d3e3fd", "dark": "#0842a0", "tonalRamp": ["#041e49", "#062e6f", "#0842a0", "#0b57d0", "#4c8df6", "#a8c7fa", "#d3e3fd", "#ecf3fe"] },
+      "error": { "role": "secondary", "displayName": "Chrome Error Red", "canonical": "#b3261e", "dark": "#f2b8b5", "tonalRamp": ["#410e0b", "#601410", "#8c1d18", "#b3261e", "#dc362e", "#f2b8b5", "#f9dedc", "#fceeee"] },
+      "error-container": { "role": "secondary", "displayName": "Error Container", "canonical": "#f9dedc", "dark": "#8c1d18", "tonalRamp": ["#410e0b", "#601410", "#8c1d18", "#b3261e", "#dc362e", "#f2b8b5", "#f9dedc", "#fceeee"] },
+      "this-tab": { "role": "tertiary", "displayName": "This-Tab Coral", "canonical": "#f26d6d", "tonalRamp": ["#4a1414", "#7a2222", "#b33a3a", "#e05555", "#f26d6d", "#f69a9a", "#fac4c4", "#fde8e8"] },
+      "surface": { "role": "neutral", "displayName": "Bubble White", "canonical": "#ffffff", "dark": "#28292c", "tonalRamp": ["#1f1f1f", "#28292c", "#303134", "#3c3d41", "#e9eef6", "#f0f4f9", "#f8fafd", "#ffffff"] },
+      "surface-low": { "role": "neutral", "displayName": "Page Wash", "canonical": "#f8fafd", "dark": "#1f1f1f" },
+      "surface-container": { "role": "neutral", "displayName": "Inset Grey-Blue", "canonical": "#f0f4f9", "dark": "#303134" },
+      "surface-high": { "role": "neutral", "displayName": "Raised Grey-Blue", "canonical": "#e9eef6", "dark": "#3c3d41" },
+      "on-surface": { "role": "neutral", "displayName": "Ink", "canonical": "#1f1f1f", "dark": "#e3e3e3", "tonalRamp": ["#1f1f1f", "#303134", "#474747", "#747775", "#8e918f", "#c4c7c5", "#e3e3e3", "#ffffff"] },
+      "on-surface-variant": { "role": "neutral", "displayName": "Muted Ink", "canonical": "#474747", "dark": "#c4c7c5" },
+      "outline": { "role": "neutral", "displayName": "Outline", "canonical": "#747775", "dark": "#8e918f" },
+      "outline-variant": { "role": "neutral", "displayName": "Hairline", "canonical": "#e3e3e3", "dark": "#47484b" },
+      "hover": { "role": "neutral", "displayName": "Hover Overlay (8%)", "canonical": "rgb(31 31 31 / 0.08)", "dark": "rgb(227 227 227 / 0.08)" },
+      "pressed": { "role": "neutral", "displayName": "Pressed Overlay (12%)", "canonical": "rgb(31 31 31 / 0.12)", "dark": "rgb(227 227 227 / 0.12)" },
+      "group-grey": { "role": "tertiary", "displayName": "Tab Group Grey", "canonical": "#5f6368", "dark": "#bdc1c6" },
+      "group-blue": { "role": "tertiary", "displayName": "Tab Group Blue", "canonical": "#1a73e8", "dark": "#8ab4f8" },
+      "group-red": { "role": "tertiary", "displayName": "Tab Group Red", "canonical": "#d93025", "dark": "#f28b82" },
+      "group-yellow": { "role": "tertiary", "displayName": "Tab Group Yellow", "canonical": "#f9ab00", "dark": "#fdd663" },
+      "group-green": { "role": "tertiary", "displayName": "Tab Group Green", "canonical": "#188038", "dark": "#81c995" },
+      "group-pink": { "role": "tertiary", "displayName": "Tab Group Pink", "canonical": "#d01884", "dark": "#ff8bcb" },
+      "group-purple": { "role": "tertiary", "displayName": "Tab Group Purple", "canonical": "#a142f4", "dark": "#d7aefb" },
+      "group-cyan": { "role": "tertiary", "displayName": "Tab Group Cyan", "canonical": "#007b83", "dark": "#78d9ec" },
+      "group-orange": { "role": "tertiary", "displayName": "Tab Group Orange", "canonical": "#fa903e", "dark": "#fcad70" }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Settings top-bar title and the prompt card's question; the largest type in the system." },
+      "title": { "displayName": "Title", "purpose": "Popup identity header container name and edit panel heading." },
+      "section": { "displayName": "Section", "purpose": "Settings section headings above each card." },
+      "body": { "displayName": "Body", "purpose": "Rows, field values, prompt copy; Chrome's 13px." },
+      "body-strong": { "displayName": "Body Strong", "purpose": "Button labels and kbd chips." },
+      "secondary": { "displayName": "Secondary", "purpose": "Row meta, notices, page notes." },
+      "label": { "displayName": "Label", "purpose": "Field labels and edit-panel section titles, sentence case." },
+      "hint": { "displayName": "Hint", "purpose": "Keyboard shortcut hints at the right edge of container rows." }
+    },
+    "shadows": [
+      { "name": "card-lift", "value": "0 1px 2px rgb(0 0 0 / 0.3), 0 1px 3px 1px rgb(0 0 0 / 0.15)", "dark": "0 1px 2px rgb(0 0 0 / 0.5), 0 1px 3px 1px rgb(0 0 0 / 0.3)", "purpose": "Settings cards and the prompt card only; never inside the popup." },
+      { "name": "surface-ring", "value": "0 0 0 2px var(--surface)", "purpose": "Separates the coral dot from its avatar and the selected swatch from its colour ring." },
+      { "name": "focus-ring", "value": "outline: 2px solid var(--primary); outline-offset: 2px", "purpose": "Every focusable control; offset -2px on full-width rows and the search pill." }
+    ],
+    "motion": [
+      { "name": "state", "value": "120ms", "purpose": "Hover and press overlays, field stroke changes, row action reveal." },
+      { "name": "switch", "value": "150ms cubic-bezier(.2,0,0,1)", "purpose": "Switch thumb travel and track colour." },
+      { "name": "panel-enter", "value": "180ms cubic-bezier(.2,0,0,1), from opacity 0 and translateX(8px)", "purpose": "Edit panel sliding in place inside the popup." },
+      { "name": "reduced-motion", "value": "0ms", "purpose": "All transitions and animations under prefers-reduced-motion: reduce." }
+    ],
+    "breakpoints": [
+      { "name": "popup", "value": "340px", "purpose": "Fixed popup width; Chrome caps height at 600px." },
+      { "name": "prompt-card", "value": "520px", "purpose": "Prompt card max width." },
+      { "name": "settings-column", "value": "680px", "purpose": "Settings page column max width." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Outlined Button",
+      "kind": "button",
+      "refersTo": "button-outlined",
+      "description": "Chrome's default pill button; most actions use it.",
+      "html": "<button class=\"ds-btn\">Export</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--outline, #747775); background: transparent; color: var(--primary, #0b57d0); font: 500 13px/20px system-ui, \"Segoe UI Variable Text\", \"Segoe UI\", Roboto, sans-serif; cursor: pointer; position: relative; isolation: isolate; } .ds-btn::after { content: \"\"; position: absolute; inset: 0; border-radius: inherit; z-index: -1; transition: background 120ms; } .ds-btn:hover::after { background: var(--hover, rgb(31 31 31 / 0.08)); } .ds-btn:active::after { background: var(--pressed, rgb(31 31 31 / 0.12)); } .ds-btn:focus-visible { outline: 2px solid var(--primary, #0b57d0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Filled Button",
+      "kind": "button",
+      "refersTo": "button-filled",
+      "description": "The single primary action of a view.",
+      "html": "<button class=\"ds-btn-filled\">Open here</button>",
+      "css": ".ds-btn-filled { display: inline-flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid transparent; background: var(--primary, #0b57d0); color: var(--on-primary, #ffffff); font: 500 13px/20px system-ui, \"Segoe UI Variable Text\", \"Segoe UI\", Roboto, sans-serif; cursor: pointer; position: relative; isolation: isolate; } .ds-btn-filled::after { content: \"\"; position: absolute; inset: 0; border-radius: inherit; z-index: -1; transition: background 120ms; } .ds-btn-filled:hover::after { background: var(--hover, rgb(31 31 31 / 0.08)); } .ds-btn-filled:active::after { background: var(--pressed, rgb(31 31 31 / 0.12)); } .ds-btn-filled:focus-visible { outline: 2px solid var(--primary, #0b57d0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Tonal Button",
+      "kind": "button",
+      "refersTo": "button-tonal",
+      "description": "Secondary emphasis on the blue container fill.",
+      "html": "<button class=\"ds-btn-tonal\">New container</button>",
+      "css": ".ds-btn-tonal { display: inline-flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid transparent; background: var(--primary-container, #d3e3fd); color: var(--on-primary-container, #041e49); font: 500 13px/20px system-ui, \"Segoe UI Variable Text\", \"Segoe UI\", Roboto, sans-serif; cursor: pointer; position: relative; isolation: isolate; } .ds-btn-tonal::after { content: \"\"; position: absolute; inset: 0; border-radius: inherit; z-index: -1; transition: background 120ms; } .ds-btn-tonal:hover::after { background: var(--hover, rgb(31 31 31 / 0.08)); } .ds-btn-tonal:active::after { background: var(--pressed, rgb(31 31 31 / 0.12)); } .ds-btn-tonal:focus-visible { outline: 2px solid var(--primary, #0b57d0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive actions: delete, sign out.",
+      "html": "<button class=\"ds-btn-danger\">Delete</button>",
+      "css": ".ds-btn-danger { display: inline-flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--outline, #747775); background: transparent; color: var(--error, #b3261e); font: 500 13px/20px system-ui, \"Segoe UI Variable Text\", \"Segoe UI\", Roboto, sans-serif; cursor: pointer; transition: background 120ms; } .ds-btn-danger:hover { background: var(--hover, rgb(31 31 31 / 0.08)); } .ds-btn-danger:active { background: var(--pressed, rgb(31 31 31 / 0.12)); } .ds-btn-danger:focus-visible { outline: 2px solid var(--primary, #0b57d0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Outlined Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Outlined 8px field with its label above.",
+      "html": "<label class=\"ds-field\"><span>Name</span><input class=\"ds-input\" placeholder=\"Container name\"></label>",
+      "css": ".ds-field { display: grid; gap: 6px; font: 13px/20px system-ui, \"Segoe UI Variable Text\", \"Segoe UI\", Roboto, sans-serif; } .ds-field > span { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--on-surface-variant, #474747); } .ds-input { height: 36px; width: 100%; border-radius: 8px; border: 1px solid var(--outline, #747775); background: transparent; padding: 0 12px; font: inherit; color: var(--on-surface, #1f1f1f); outline: none; transition: border-color 120ms, box-shadow 120ms; } .ds-input:hover { border-color: var(--on-surface, #1f1f1f); } .ds-input:focus { border-color: var(--primary, #0b57d0); box-shadow: inset 0 0 0 1px var(--primary, #0b57d0); } .ds-input::placeholder { color: var(--on-surface-variant, #474747); opacity: 1; }"
+    },
+    {
+      "name": "Pill Search",
+      "kind": "input",
+      "refersTo": "search",
+      "description": "Chrome's pill search box at the top of the container list.",
+      "html": "<label class=\"ds-search\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><line x1=\"20\" y1=\"20\" x2=\"16.2\" y2=\"16.2\"/></svg><input placeholder=\"Search containers\"></label>",
+      "css": ".ds-search { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 999px; background: var(--surface-high, #e9eef6); color: var(--on-surface-variant, #474747); font: 13px/20px system-ui, \"Segoe UI Variable Text\", \"Segoe UI\", Roboto, sans-serif; } .ds-search:focus-within { outline: 2px solid var(--primary, #0b57d0); outline-offset: -2px; } .ds-search input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font: inherit; color: var(--on-surface, #1f1f1f); height: 100%; } .ds-search input::placeholder { color: var(--on-surface-variant, #474747); opacity: 1; }"
+    },
+    {
+      "name": "Container Row",
+      "kind": "custom",
+      "refersTo": "container-row",
+      "description": "Extensions-menu-style row: tinted avatar, name with the coral this-tab dot, meta, and a shortcut hint that gives way to round actions on hover or focus.",
+      "html": "<div class=\"ds-item\"><span class=\"ds-avatar\">C</span><span class=\"ds-text\"><span class=\"ds-name\">Contoso <i class=\"ds-dot\"></i></span><span class=\"ds-meta\">3 tabs · 2 sites</span></span><span class=\"ds-hint\">Ctrl+Shift+1</span><span class=\"ds-actions\"><button class=\"ds-icon-btn\" aria-label=\"Edit\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z\"/></svg></button></span></div>",
+      "css": ".ds-item { position: relative; display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 16px; width: 340px; font: 13px/20px system-ui, \"Segoe UI Variable Text\", \"Segoe UI\", Roboto, sans-serif; color: var(--on-surface, #1f1f1f); cursor: pointer; transition: background 120ms; } .ds-item:hover { background: var(--hover, rgb(31 31 31 / 0.08)); } .ds-item:active { background: var(--pressed, rgb(31 31 31 / 0.12)); } .ds-avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 15px; line-height: 1; font-weight: 600; background: color-mix(in srgb, var(--blue, #1a73e8) 22%, var(--surface, #ffffff)); color: var(--blue, #1a73e8); flex: none; } .ds-text { flex: 1; min-width: 0; display: grid; } .ds-name { display: flex; align-items: center; gap: 6px; } .ds-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--this-tab, #f26d6d); } .ds-meta { font-size: 12px; line-height: 16px; color: var(--on-surface-variant, #474747); } .ds-hint { font-size: 11px; line-height: 16px; color: var(--on-surface-variant, #474747); white-space: nowrap; } .ds-item:hover .ds-hint, .ds-item:focus-within .ds-hint { display: none; } .ds-actions { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; opacity: 0; pointer-events: none; transition: opacity 120ms; } .ds-item:hover .ds-actions, .ds-item:focus-within .ds-actions { opacity: 1; pointer-events: auto; } .ds-icon-btn { width: 32px; height: 32px; border-radius: 50%; border: 0; background: transparent; color: var(--on-surface-variant, #474747); display: grid; place-items: center; cursor: pointer; transition: background 120ms; } .ds-icon-btn:hover { background: var(--hover, rgb(31 31 31 / 0.08)); } .ds-icon-btn:focus-visible { outline: 2px solid var(--primary, #0b57d0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Settings Card",
+      "kind": "card",
+      "refersTo": "settings-card",
+      "description": "chrome://settings-style card of rows, each with a trailing control.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-row\"><span class=\"ds-grow\">Sync containers and site assignments<br><small>Names, colours and sites sync through your Chrome account.</small></span><label class=\"ds-switch\"><input type=\"checkbox\" checked aria-label=\"Sync\"><span></span></label></div><div class=\"ds-card-row\"><span class=\"ds-grow\">Open this popup</span><kbd>Ctrl+Period</kbd></div></div>",
+      "css": ".ds-card { background: var(--surface, #ffffff); border-radius: 12px; box-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 3px 1px rgb(0 0 0 / 0.15); overflow: hidden; font: 13px/20px system-ui, \"Segoe UI Variable Text\", \"Segoe UI\", Roboto, sans-serif; color: var(--on-surface, #1f1f1f); max-width: 680px; } .ds-card-row { display: flex; align-items: center; gap: 16px; padding: 12px 20px; min-height: 56px; } .ds-card-row + .ds-card-row { border-top: 1px solid var(--outline-variant, #e3e3e3); } .ds-grow { flex: 1; min-width: 0; } .ds-grow small { font-size: 12px; line-height: 16px; color: var(--on-surface-variant, #474747); } .ds-card kbd { font: inherit; font-weight: 500; padding: 0 6px; border-radius: 4px; background: var(--surface-high, #e9eef6); white-space: nowrap; } .ds-switch { position: relative; width: 36px; height: 20px; flex: none; } .ds-switch input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; } .ds-switch span { position: absolute; inset: 0; border-radius: 999px; border: 2px solid var(--outline, #747775); background: var(--surface-high, #e9eef6); transition: background 150ms, border-color 150ms; pointer-events: none; } .ds-switch span::after { content: \"\"; position: absolute; left: 3px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; background: var(--outline, #747775); transition: transform 150ms cubic-bezier(.2,0,0,1), width 150ms, height 150ms, margin 150ms, background 150ms; } .ds-switch input:checked + span { background: var(--primary, #0b57d0); border-color: var(--primary, #0b57d0); } .ds-switch input:checked + span::after { transform: translateX(15px); width: 12px; height: 12px; margin-top: -6px; left: 2px; background: var(--on-primary, #ffffff); } .ds-switch input:focus-visible + span { outline: 2px solid var(--primary, #0b57d0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Error Notice",
+      "kind": "custom",
+      "refersTo": "error-notice",
+      "description": "Inline error notice in the popup, above the list.",
+      "html": "<div class=\"ds-notice\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"16\" x2=\"12.01\" y2=\"16\"/></svg><span>Couldn't open a tab in this container. Try again.</span></div>",
+      "css": ".ds-notice { display: flex; gap: 8px; align-items: flex-start; padding: 8px 12px; border-radius: 8px; background: var(--error-container, #f9dedc); color: var(--on-error-container, #410e0b); font: 12px/16px system-ui, \"Segoe UI Variable Text\", \"Segoe UI\", Roboto, sans-serif; max-width: 308px; } .ds-notice svg { flex: none; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Indistinguishable From Chrome",
+    "overview": "Every surface the extension owns (the 340px toolbar popup, the full-page site prompt, the settings page) is built to read as a Chrome feature, not an extension's mini-app. The reference set is Chrome's own current Material UI: the profile menu, the extensions menu, the tab group editor and chrome://settings, in light and dark. Craft is measured by whether a person could tell the extension's popup apart from those menus; the goal is that they cannot.\n\nThe system is dense and quiet. Body text sits at Chrome's 13px, rows are menu-height, state is shown with 8% and 12% overlays of the text colour, and separation comes from 1px hairline dividers and tonal containers rather than decoration. Colour is functional: blue for focus and primary action, red for error, Chrome's nine tab-group colours for container identity. The rejected alternative is the bespoke card dashboard most container extensions ship.\n\nThere are exactly two brand marks inside these pages: the extension icon (in the settings top bar and on the prompt card) and the small coral dot that marks the container the current tab is in. Everything else is borrowed from the platform.",
+    "keyCharacteristics": [
+      "Chrome Material tokens, light and dark, switched by `prefers-color-scheme` only.",
+      "System UI font at Chrome's sizes; a 13px/20px body and nothing larger than 20px.",
+      "Full-width menu rows with full-row hover bands; pill buttons and a pill search.",
+      "Container identity carried by emoji-or-initial avatars on tab-group colours.",
+      "One coral dot (#f26d6d) as the only extension-owned accent."
+    ],
+    "rules": [
+      { "name": "The Two Marks Rule", "body": "The only brand elements inside the pages are the extension icon and the coral this-tab dot. No other colour, gradient or ornament from the icon family enters the UI.", "section": "colors" },
+      { "name": "The Blue Means Act Rule", "body": "Primary blue appears only where the user can act or is focused: buttons, focus rings, checked controls, insertion lines. It is never a heading colour or a decorative fill.", "section": "colors" },
+      { "name": "The Identity Palette Rule", "body": "Tab-group colours identify containers and nothing else. They are not status colours and never tint chrome.", "section": "colors" },
+      { "name": "The Chrome Sizes Rule", "body": "Type stays on Chrome's ramp: 11, 12, 13, 15, 20px. Nothing larger, no display face, no uppercase labels.", "section": "typography" },
+      { "name": "The Popup Is Flat Rule", "body": "Nothing inside the popup casts a shadow; Chrome draws the bubble, the extension draws tone and hairlines.", "section": "elevation" }
+    ],
+    "dos": [
+      "**Do** take every colour from the token set and switch light and dark with `prefers-color-scheme` alone.",
+      "**Do** show hover and press as the 8% and 12% ink overlays, across the full width of a row.",
+      "**Do** keep type on Chrome's ramp (11, 12, 13, 15, 20px) in the system UI font, with weight as the only emphasis.",
+      "**Do** use the 2px blue focus ring (offset 2px, inset -2px on full-width rows and the search pill) on every focusable control.",
+      "**Do** draw icons as inline 1.75-stroke line SVGs in the current text colour.",
+      "**Do** honour `prefers-reduced-motion` by collapsing transitions and animations to 0ms."
+    ],
+    "donts": [
+      "**Don't** add brand colour, gradients or ornaments from the icon family to the pages; the icon and the coral dot are the only marks.",
+      "**Don't** use primary blue as decoration, or the tab-group colours for anything but container identity.",
+      "**Don't** put shadows inside the popup; the Card Lift shadow belongs to settings and prompt cards only.",
+      "**Don't** introduce a second typeface, uppercase labels, or type larger than 20px.",
+      "**Don't** build bespoke cards or dashboard tiles for the container list; it is a menu of rows."
+    ]
+  }
+}

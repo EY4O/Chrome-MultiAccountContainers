@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Containers for Chrome (spike)",
+  "name": "Containers",
   "version": "0.1.0",
-  "description": "Spike: per-tab cookie and storage isolation, in the spirit of Multi-Account Containers.",
+  "description": "Separate sign-ins per tab: open sites in containers that keep their own cookies and site data, shown as Chrome tab groups.",
   "minimum_chrome_version": "121",
   "permissions": [
     "declarativeNetRequest",
@@ -13,7 +13,8 @@
     "tabGroups",
     "webNavigation",
     "alarms",
-    "browsingData"
+    "browsingData",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -63,5 +64,70 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Period",
+        "mac": "MacCtrl+Period"
+      },
+      "description": "Open the Containers popup"
+    },
+    "open-container-1": {
+      "description": "Open a new tab in container 1",
+      "suggested_key": {
+        "default": "Ctrl+Shift+1",
+        "mac": "MacCtrl+Shift+1"
+      }
+    },
+    "open-container-2": {
+      "description": "Open a new tab in container 2",
+      "suggested_key": {
+        "default": "Ctrl+Shift+2",
+        "mac": "MacCtrl+Shift+2"
+      }
+    },
+    "open-container-3": {
+      "description": "Open a new tab in container 3",
+      "suggested_key": {
+        "default": "Ctrl+Shift+3",
+        "mac": "MacCtrl+Shift+3"
+      }
+    },
+    "open-container-4": {
+      "description": "Open a new tab in container 4"
+    },
+    "open-container-5": {
+      "description": "Open a new tab in container 5"
+    },
+    "open-container-6": {
+      "description": "Open a new tab in container 6"
+    },
+    "open-container-7": {
+      "description": "Open a new tab in container 7"
+    },
+    "open-container-8": {
+      "description": "Open a new tab in container 8"
+    },
+    "open-container-9": {
+      "description": "Open a new tab in container 9"
+    },
+    "open-container-10": {
+      "description": "Open a new tab in container 10"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "prompt.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
 }

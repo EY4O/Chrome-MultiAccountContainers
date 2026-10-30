@@ -147,6 +147,27 @@ test("service-worker hosts come from pages opened and cookies held, nothing else
   assert.deepEqual(serviceWorkerHosts([], [], now), [], "nothing used, nothing listed");
 });
 
+test("an assigned host redirects to the prompt from every tab but its container's", () => {
+  const rules = buildRules({
+    containers: [],
+    knownTabIds: [1, 2],
+    assignmentRedirects: [{ hosts: ["portal.clienta.com", "x.y"], excludedTabIds: [2] }],
+    promptUrl: "chrome-extension://abc/prompt.html",
+    now,
+  });
+  const redirect = rules.find((r) => r.action.type === "redirect")!;
+  const re = new RegExp(redirect.condition.regexFilter!);
+  assert.ok(re.test("https://portal.clienta.com/login?next=/home"));
+  assert.ok(re.test("https://portal.clienta.com"));
+  assert.ok(!re.test("https://sub.portal.clienta.com/"), "exact host only");
+  assert.ok(!re.test("https://portal.clienta.com.evil.net/"));
+  assert.ok(!re.test("https://xay/"), "dots are literal");
+  assert.deepEqual(redirect.condition.excludedTabIds, [2]);
+  assert.deepEqual(redirect.condition.resourceTypes, ["main_frame"]);
+  assert.equal(redirect.action.redirect?.regexSubstitution, "chrome-extension://abc/prompt.html#\\0");
+  assert.ok(rules.every((r) => r === redirect || r.priority! < redirect.priority!), "beats every other rule");
+});
+
 test("only known tabs and tabless requests escape the lockdown", () => {
   const rules = buildRules({ containers: [{ id: "c1", tabIds: [1], cookies: jarFrom([["a=1", "https://x.com/"]]) }], knownTabIds: [1, 2], now });
   const allow = rules.find((r) => r.action.type === "allow")!;

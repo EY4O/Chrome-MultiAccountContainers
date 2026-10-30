@@ -10,7 +10,9 @@ import {
   parseSetCookie,
   siteOf,
 } from "../shared/cookie.ts";
-import type { BgMessage, SnapshotReply } from "../shared/messages.ts";
+import type { Backup, BgMessage, ContainerView, PopupState, PromptInfo, SnapshotReply } from "../shared/messages.ts";
+import { installMenus } from "./menus.ts";
+import { installSync, pull as syncPull, push as syncPush, setEnabled as setSyncEnabled, syncStatus } from "./sync.ts";
 import { LOCKDOWN_RULE, buildRules, ruleUsage, serviceWorkerHosts as hostsFor } from "./rules.ts";
 import * as state from "./state.ts";
 
@@ -85,13 +87,30 @@ function ruleInputs(extra?: { tabId: number; containerId: string }) {
 }
 
 /** Whether adding a tab to this container keeps the rules within Chrome's limits. */
-function roomFor(containerId: string): boolean {
-  if (state.tabsOf(containerId).length) return true; // already has rules
-  return fits(buildRules({
-    containers: ruleInputs({ tabId: 0, containerId }),
+/** Tabs that chose "stay here" on the prompt, per container they declined. */
+const exemptTabs = new Map<string, Set<number>>();
+
+/** Everything buildRules needs besides the containers. */
+function sharedRuleInputs() {
+  const byContainer = new Map<string, string[]>();
+  for (const [host, a] of Object.entries(state.listAssignments())) {
+    if (a.allowElsewhere || !state.getContainer(a.containerId)) continue;
+    byContainer.set(a.containerId, [...(byContainer.get(a.containerId) ?? []), host]);
+  }
+  return {
     knownTabIds: state.knownTabIds(),
     noServiceWorkerHosts: serviceWorkerHosts(),
-  }));
+    promptUrl: chrome.runtime.getURL("prompt.html"),
+    assignmentRedirects: [...byContainer].map(([containerId, hosts]) => ({
+      hosts,
+      excludedTabIds: [...state.tabsOf(containerId), ...(exemptTabs.get(containerId) ?? [])],
+    })),
+  };
+}
+
+function roomFor(containerId: string): boolean {
+  if (state.tabsOf(containerId).length) return true; // already has rules
+  return fits(buildRules({ containers: ruleInputs({ tabId: 0, containerId }), ...sharedRuleInputs() }));
 }
 
 /**
@@ -100,16 +119,15 @@ function roomFor(containerId: string): boolean {
  */
 function buildWithinBudget(): chrome.declarativeNetRequest.Rule[] {
   const inputs = ruleInputs();
-  const knownTabIds = state.knownTabIds();
-  const noServiceWorkerHosts = serviceWorkerHosts();
-  let rules = buildRules({ containers: inputs, knownTabIds, noServiceWorkerHosts });
+  const shared = sharedRuleInputs();
+  let rules = buildRules({ containers: inputs, ...shared });
   const dropped: string[] = [];
   const byAge = inputs.filter((c) => c.tabIds.length).sort((a, b) => state.lastUsedAt(a.id) - state.lastUsedAt(b.id));
   while (!fits(rules) && byAge.length) {
     const victim = byAge.shift()!;
     victim.cookies = [];
     dropped.push(state.getContainer(victim.id)?.name ?? victim.id);
-    rules = buildRules({ containers: inputs, knownTabIds, noServiceWorkerHosts });
+    rules = buildRules({ containers: inputs, ...shared });
   }
   if (dropped.join() !== stats.overBudget.join()) {
     stats.overBudget = dropped;
@@ -353,6 +371,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => void (async () => {
 chrome.tabs.onRemoved.addListener((tabId) => void (async () => {
   await startup;
   logEvent("removed", { tabId, containerId: state.containerOfTab(tabId) ?? null });
+  for (const tabs of exemptTabs.values()) tabs.delete(tabId);
   classifiedAt.delete(tabId);
   renavigated.delete(tabId);
   await state.forgetTab(tabId);
@@ -394,7 +413,7 @@ async function containerOfGroup(groupId: number | undefined): Promise<string | n
   if (owner && state.getContainer(owner)) return owner;
   try {
     const group = await chrome.tabGroups.get(groupId);
-    const match = state.listContainers().find((c) => c.name === group.title && c.color === group.color);
+    const match = state.listContainers().find((c) => state.groupTitle(c) === group.title && c.color === group.color);
     if (!match) return null;
     await state.setGroupOwner(groupId, match.id);
     return match.id;
@@ -426,7 +445,7 @@ async function groupTabNow(tabId: number, containerId: string): Promise<void> {
       const group = await chrome.tabGroups.get(owned).catch(() => null);
       if (group?.windowId === tab.windowId) groupId = owned;
     }
-    groupId ??= (await chrome.tabGroups.query({ windowId: tab.windowId, title: container.name }))
+    groupId ??= (await chrome.tabGroups.query({ windowId: tab.windowId, title: state.groupTitle(container) }))
       .find((g) => g.color === container.color)?.id;
     if (groupId !== undefined) {
       await chrome.tabs.group({ groupId, tabIds: [tabId] });
@@ -437,7 +456,7 @@ async function groupTabNow(tabId: number, containerId: string): Promise<void> {
     namingGroups.add(groupId);
     try {
       await state.setGroupOwner(groupId, containerId);
-      await chrome.tabGroups.update(groupId, { title: container.name, color: container.color as chrome.tabGroups.Color });
+      await chrome.tabGroups.update(groupId, { title: state.groupTitle(container), color: container.color as chrome.tabGroups.Color });
     } finally {
       namingGroups.delete(groupId);
     }
@@ -478,7 +497,8 @@ async function onTabGroupChanged(tabId: number): Promise<void> {
 }
 
 // Renaming or recolouring a container's group renames or recolours the
-// container. An empty name, or one another container already has, is put back.
+// container (an emoji in front of the name becomes its emoji). An empty name,
+// or one another container already has, is put back.
 chrome.tabGroups.onUpdated.addListener((group) => void onGroupEdited(group.id));
 chrome.tabGroups.onRemoved.addListener((group) => void state.setGroupOwner(group.id, null));
 
@@ -490,31 +510,43 @@ async function onGroupEdited(groupId: number): Promise<void> {
   if (!container) return;
   const group = await chrome.tabGroups.get(groupId).catch(() => null); // the event's copy may be stale
   if (!group) return;
-  const title = (group.title ?? "").trim();
-  const nameTaken = state.listContainers().some((c) => c.id !== container.id && c.name === title);
-  const name = title && !nameTaken ? title : container.name;
-  const color = group.color as state.GroupColor;
-  if (name !== container.name || color !== container.color) {
-    await state.updateContainer(container.id, { name, color });
-    logEvent("container-edited", { containerId: container.id, name, color });
+  const parsed = state.parseGroupTitle(group.title ?? "");
+  const nameTaken = state.listContainers().some((c) => c.id !== container.id && c.name === parsed.name);
+  const usable = parsed.name && !nameTaken;
+  const changes = {
+    name: usable ? parsed.name : container.name,
+    emoji: usable ? parsed.emoji ?? "" : container.emoji ?? "",
+    color: group.color as state.GroupColor,
+  };
+  if (changes.name !== container.name || changes.emoji !== (container.emoji ?? "") || changes.color !== container.color) {
+    await state.updateContainer(container.id, changes);
+    logEvent("container-edited", { containerId: container.id, ...changes });
   }
-  for (const owned of state.groupsOf(container.id)) {
-    const other = await chrome.tabGroups.get(owned).catch(() => null);
-    if (other && (other.title !== name || other.color !== color)) {
-      await chrome.tabGroups.update(owned, { title: name, color: color as chrome.tabGroups.Color }).catch(() => {});
+  await refreshGroups(container.id);
+}
+
+/** Makes every tab group of a container show its current name, emoji and colour. */
+async function refreshGroups(containerId: string): Promise<void> {
+  const container = state.getContainer(containerId);
+  if (!container) return;
+  const title = state.groupTitle(container);
+  for (const owned of state.groupsOf(containerId)) {
+    const group = await chrome.tabGroups.get(owned).catch(() => null);
+    if (group && (group.title !== title || group.color !== container.color)) {
+      await chrome.tabGroups.update(owned, { title, color: container.color as chrome.tabGroups.Color }).catch(() => {});
     }
   }
 }
 
 /** Opens `url` in a new tab that belongs to the container from its first request. */
-export async function openTab(url: string, containerId: string, windowId?: number): Promise<number> {
+export async function openTab(url: string, containerId: string, windowId?: number, index?: number): Promise<number> {
   await startup;
   if (!state.getContainer(containerId)) throw new Error(`no container ${containerId}`);
   if (!roomFor(containerId)) {
     throw new Error("Chrome's rule limit is full. Close the tabs of a container you're not using, then try again.");
   }
   await noteContainerOrigin(url, containerId); // before the first request, so no worker answers it
-  const tab = await chrome.tabs.create({ url: "about:blank", windowId });
+  const tab = await chrome.tabs.create({ url: "about:blank", windowId, ...(index !== undefined && { index }) });
   await classify(tab.id!, containerId);
   await chrome.tabs.update(tab.id!, { url });
   void groupTab(tab.id!, containerId);
@@ -541,8 +573,134 @@ function snapshotFor(sender: chrome.runtime.MessageSender, claimed?: string): Sn
   return { container: containerId, cookies: cookies.map((c) => [c.name, c.value, c.expires ?? 0]) };
 }
 
+// The popup, and the prompt and options pages (which run in tabs).
 const fromExtensionPage = (sender: chrome.runtime.MessageSender) =>
-  !sender.tab && sender.url?.startsWith(chrome.runtime.getURL(""));
+  sender.id === chrome.runtime.id && !!sender.url?.startsWith(chrome.runtime.getURL(""));
+
+/** Moves a tab into a container (or out to normal); live group sync then switches and reloads it. */
+async function reopenTab(tabId: number, containerId: string | null): Promise<void> {
+  if ((state.containerOfTab(tabId) ?? null) === containerId) return;
+  if (containerId) await groupTab(tabId, containerId);
+  else await chrome.tabs.ungroup(tabId).catch(() => {});
+}
+
+/** "Always open this site in": remembers it and moves the tab it was set from. */
+async function assignSite(host: string, containerId: string | null, tabId?: number): Promise<void> {
+  await state.setAssignment(host, containerId ? { containerId, ask: true } : null);
+  await scheduleSync();
+  if (containerId && tabId !== undefined) await reopenTab(tabId, containerId);
+}
+
+async function hideContainer(containerId: string, hidden: boolean): Promise<void> {
+  for (const groupId of state.groupsOf(containerId)) {
+    await chrome.tabGroups.update(groupId, { collapsed: hidden }).catch(() => {});
+  }
+}
+
+async function shortcutsByContainer(): Promise<Map<string, string>> {
+  const commands = await chrome.commands.getAll();
+  const out = new Map<string, string>();
+  state.listContainers().forEach((c, i) => {
+    const shortcut = commands.find((cmd) => cmd.name === `open-container-${i + 1}`)?.shortcut;
+    if (shortcut) out.set(c.id, shortcut);
+  });
+  return out;
+}
+
+async function popupState(tabId?: number): Promise<PopupState> {
+  const shortcuts = await shortcutsByContainer();
+  const containers: ContainerView[] = [];
+  for (const c of state.listContainers()) {
+    const groups = await Promise.all(state.groupsOf(c.id).map((g) => chrome.tabGroups.get(g).catch(() => null)));
+    const live = groups.filter((g) => g !== null);
+    containers.push({
+      ...c,
+      tabs: state.tabsOf(c.id).length,
+      sites: Object.keys(state.assignmentsOf(c.id)).sort(),
+      hidden: live.length > 0 && live.every((g) => g.collapsed),
+      shortcut: shortcuts.get(c.id) ?? "",
+    });
+  }
+  let tab: PopupState["tab"] = null;
+  if (tabId !== undefined) {
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    const host = t?.url && /^https?:/.test(t.url) ? new URL(t.url).hostname : null;
+    tab = { id: tabId, containerId: state.containerOfTab(tabId) ?? null, host, assignment: host ? state.getAssignment(host) ?? null : null };
+  }
+  return { containers, tab };
+}
+
+const pick = (c: state.Container) => ({ id: c.id, name: c.name, color: c.color, ...(c.emoji && { emoji: c.emoji }) });
+
+function promptInfo(url: string, tabId: number | undefined): PromptInfo | null {
+  if (!/^https?:/.test(url)) return null;
+  const host = new URL(url).hostname;
+  const assignment = state.getAssignment(host);
+  const target = assignment && state.getContainer(assignment.containerId);
+  if (!assignment || !target) return null;
+  const currentId = tabId === undefined ? undefined : state.containerOfTab(tabId);
+  const current = currentId ? state.getContainer(currentId) : undefined;
+  return { host, target: pick(target), current: current ? pick(current) : null, ask: assignment.ask };
+}
+
+async function promptChoice(url: string, open: boolean, remember: boolean, tabId: number): Promise<void> {
+  const host = new URL(url).hostname;
+  const assignment = state.getAssignment(host);
+  if (!assignment) {
+    await chrome.tabs.update(tabId, { url });
+    return;
+  }
+  if (open) {
+    if (remember) await state.setAssignment(host, { ...assignment, ask: false });
+    await classify(tabId, assignment.containerId);
+    await groupTab(tabId, assignment.containerId);
+  } else if (remember) {
+    await state.setAssignment(host, { ...assignment, allowElsewhere: true });
+  } else {
+    const tabs = exemptTabs.get(assignment.containerId) ?? new Set<number>();
+    exemptTabs.set(assignment.containerId, tabs.add(tabId));
+  }
+  await scheduleSync();
+  await chrome.tabs.update(tabId, { url });
+}
+
+function exportBackup(): Backup {
+  return {
+    format: "containers-backup",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    containers: state.listContainers().map(pick),
+    assignments: state.listAssignments(),
+  };
+}
+
+/** Merges a backup: containers by id (renamed if the name is taken), assignments by host. */
+async function importBackup(backup: Backup): Promise<{ added: number; updated: number; sites: number }> {
+  if (backup?.format !== "containers-backup" || !Array.isArray(backup.containers)) {
+    throw new Error("That file isn't a containers backup.");
+  }
+  const result = { added: 0, updated: 0, sites: 0 };
+  for (const c of backup.containers) {
+    const existing = state.getContainer(c.id);
+    const taken = state.listContainers().some((o) => o.id !== c.id && o.name === c.name);
+    const name = taken ? `${c.name} (imported)` : c.name;
+    if (existing) {
+      await state.updateContainer(c.id, { name, color: c.color, emoji: c.emoji ?? "" });
+      await refreshGroups(c.id);
+      result.updated++;
+    } else {
+      await state.createContainer(name, c.color, c.emoji, c.id);
+      result.added++;
+    }
+  }
+  for (const [host, a] of Object.entries(backup.assignments ?? {})) {
+    if (!state.getContainer(a.containerId)) continue;
+    await state.setAssignment(host, { containerId: a.containerId, ask: a.ask !== false, ...(a.allowElsewhere && { allowElsewhere: true }) });
+    result.sites++;
+  }
+  await scheduleSync();
+  return result;
+}
 
 async function handle(msg: BgMessage, sender: chrome.runtime.MessageSender): Promise<unknown> {
   await startup;
@@ -569,12 +727,47 @@ async function handle(msg: BgMessage, sender: chrome.runtime.MessageSender): Pro
   if (!fromExtensionPage(sender)) return null;
   switch (msg.type) {
     case "mac:list":
-      return {
-        containers: state.listContainers(),
-        current: msg.tabId === undefined ? null : state.containerOfTab(msg.tabId) ?? null,
-      };
+      return popupState(msg.tabId);
     case "mac:create":
-      return state.createContainer(msg.name, msg.color);
+      return state.createContainer(msg.name, msg.color, msg.emoji || undefined);
+    case "mac:update": {
+      const { id, type: _, ...changes } = msg;
+      const updated = await state.updateContainer(id, changes);
+      await refreshGroups(id);
+      return updated;
+    }
+    case "mac:reorder":
+      await state.reorderContainers(msg.ids);
+      return null;
+    case "mac:hide":
+      await hideContainer(msg.id, msg.hidden);
+      return null;
+    case "mac:reset": {
+      await state.resetContainer(msg.id);
+      await scheduleSync();
+      for (const tabId of state.tabsOf(msg.id)) chrome.tabs.reload(tabId).catch(() => {});
+      return null;
+    }
+    case "mac:reopen":
+      await reopenTab(msg.tabId, msg.id);
+      return null;
+    case "mac:assign":
+      await assignSite(msg.host, msg.id, msg.tabId);
+      return null;
+    case "mac:prompt-info":
+      return promptInfo(msg.url, sender.tab?.id);
+    case "mac:prompt-choice":
+      if (sender.tab?.id !== undefined) await promptChoice(msg.url, msg.open, msg.remember, sender.tab.id);
+      return null;
+    case "mac:export":
+      return exportBackup();
+    case "mac:import":
+      return importBackup(msg.backup);
+    case "mac:sync-status":
+      return { ...syncStatus };
+    case "mac:set-sync":
+      await setSyncEnabled(msg.enabled);
+      return { ...syncStatus };
     case "mac:delete": {
       const orphans = await state.deleteContainer(msg.id);
       await scheduleSync();
@@ -583,7 +776,7 @@ async function handle(msg: BgMessage, sender: chrome.runtime.MessageSender): Pro
       return null;
     }
     case "mac:open":
-      return openTab(msg.url ?? "about:blank", msg.id, msg.windowId);
+      return openTab(msg.url ?? "chrome://newtab/", msg.id, msg.windowId);
   }
   return null;
 }
@@ -721,6 +914,30 @@ chrome.runtime.onStartup.addListener(() => void startup.then(async ({ httpTabs }
   if (!httpTabs) await state.dropSessionCookies();
 }));
 
+// --- Menus, shortcuts, sync ---------------------------------------------------------
+
+installMenus({
+  openLink: (url, containerId, tab) => openTab(url, containerId, tab.windowId, tab.index + 1),
+  reopen: reopenTab,
+  assign: assignSite,
+});
+
+// Ctrl+Shift+1/2/3 (and any keys set for 4-10) open a new tab in that container.
+chrome.commands.onCommand.addListener((command, tab) => void (async () => {
+  const n = /^open-container-(\d+)$/.exec(command)?.[1];
+  const container = n ? state.listContainers()[Number(n) - 1] : undefined;
+  if (container) await openTab("chrome://newtab/", container.id, tab?.windowId).catch((e) => console.warn(e));
+})());
+
+void startup.then(() => installSync({
+  deleteContainer: async (id, at) => {
+    const orphans = await state.deleteContainer(id, at);
+    await scheduleSync();
+    if (orphans.length) await chrome.tabs.remove(orphans).catch(() => {});
+  },
+  refreshGroups,
+}));
+
 // Test hook: the e2e suite drives the engine through the worker's global scope.
 Object.assign(globalThis, {
   mac: {
@@ -745,6 +962,22 @@ Object.assign(globalThis, {
     resetIdleContainers,
     buildId: __BUILD_ID__,
     listContainers: state.listContainers,
+    listAssignments: state.listAssignments,
+    command: (name: string) => new Promise<void>((resolve) => {
+      // Same path as a real keypress: the onCommand listener above.
+      const n = /^open-container-(\d+)$/.exec(name)?.[1];
+      const container = n ? state.listContainers()[Number(n) - 1] : undefined;
+      void (container ? openTab("chrome://newtab/", container.id) : Promise.resolve()).then(() => resolve());
+    }),
+    menuClick: (info: chrome.contextMenus.OnClickData, tab: chrome.tabs.Tab) =>
+      import("./menus.ts").then((m) => m.handleMenuClick(info, tab, {
+        openLink: (url, containerId, t) => openTab(url, containerId, t.windowId, t.index + 1),
+        reopen: reopenTab,
+        assign: assignSite,
+      })),
+    syncPull,
+    syncPush,
+    syncStatus: () => ({ ...syncStatus }),
     events: () => events,
   },
 });

@@ -1,0 +1,197 @@
+/* Shared look for the extension's pages: Chrome's own current Material UI
+   (tab group editor, profile and extensions menus, chrome://settings), light
+   and dark. The only brand marks are the icon and the coral "this tab" dot. */
+
+:root {
+  color-scheme: light dark;
+  --surface: #ffffff;
+  --surface-low: #f8fafd;
+  --surface-container: #f0f4f9;
+  --surface-high: #e9eef6;
+  --on-surface: #1f1f1f;
+  --on-surface-variant: #474747;
+  --outline: #747775;
+  --outline-variant: #e3e3e3;
+  --primary: #0b57d0;
+  --on-primary: #ffffff;
+  --primary-container: #d3e3fd;
+  --on-primary-container: #041e49;
+  --error: #b3261e;
+  --error-container: #f9dedc;
+  --on-error-container: #410e0b;
+  --hover: rgb(31 31 31 / 0.08);
+  --pressed: rgb(31 31 31 / 0.12);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 3px 1px rgb(0 0 0 / 0.15);
+  --this-tab: #f26d6d;
+  --font: system-ui, "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
+
+  /* Chrome's tab group colours */
+  --grey: #5f6368; --blue: #1a73e8; --red: #d93025; --yellow: #f9ab00; --green: #188038;
+  --pink: #d01884; --purple: #a142f4; --cyan: #007b83; --orange: #fa903e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #28292c;
+    --surface-low: #1f1f1f;
+    --surface-container: #303134;
+    --surface-high: #3c3d41;
+    --on-surface: #e3e3e3;
+    --on-surface-variant: #c4c7c5;
+    --outline: #8e918f;
+    --outline-variant: #47484b;
+    --primary: #a8c7fa;
+    --on-primary: #062e6f;
+    --primary-container: #0842a0;
+    --on-primary-container: #d3e3fd;
+    --error: #f2b8b5;
+    --error-container: #8c1d18;
+    --on-error-container: #f9dedc;
+    --hover: rgb(227 227 227 / 0.08);
+    --pressed: rgb(227 227 227 / 0.12);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 1px 3px 1px rgb(0 0 0 / 0.3);
+    --grey: #bdc1c6; --blue: #8ab4f8; --red: #f28b82; --yellow: #fdd663; --green: #81c995;
+    --pink: #ff8bcb; --purple: #d7aefb; --cyan: #78d9ec; --orange: #fcad70;
+  }
+}
+
+[data-color="grey"] { --c: var(--grey); } [data-color="blue"] { --c: var(--blue); }
+[data-color="red"] { --c: var(--red); } [data-color="yellow"] { --c: var(--yellow); }
+[data-color="green"] { --c: var(--green); } [data-color="pink"] { --c: var(--pink); }
+[data-color="purple"] { --c: var(--purple); } [data-color="cyan"] { --c: var(--cyan); }
+[data-color="orange"] { --c: var(--orange); }
+
+*, *::before, *::after { box-sizing: border-box; }
+html { background: var(--surface); }
+body {
+  margin: 0;
+  color: var(--on-surface);
+  font: 13px/20px var(--font);
+  caret-color: var(--primary);
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--primary-container); color: var(--on-primary-container); }
+* { scrollbar-width: thin; scrollbar-color: var(--outline) transparent; }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+button, input, select { font: inherit; color: inherit; }
+h1, h2, h3, p { margin: 0; }
+.num { font-variant-numeric: tabular-nums; }
+.secondary { color: var(--on-surface-variant); font-size: 12px; line-height: 16px; }
+[hidden] { display: none !important; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Icons: 20px strokes in the text colour. */
+.icon { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Buttons: Chrome's pill buttons. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--outline);
+  background: transparent; color: var(--primary); font-weight: 500; cursor: pointer;
+  position: relative; isolation: isolate; white-space: nowrap;
+}
+.btn::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: transparent; z-index: -1; transition: background 120ms; }
+.btn:hover::after { background: var(--hover); }
+.btn:active::after { background: var(--pressed); }
+.btn.filled { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+.btn.tonal { background: var(--primary-container); color: var(--on-primary-container); border-color: transparent; }
+.btn.text { border-color: transparent; padding: 0 12px; }
+.btn.danger { color: var(--error); }
+.btn.danger.filled { background: var(--error); color: var(--surface); }
+.btn:disabled { opacity: 0.38; cursor: default; }
+.btn:disabled::after { background: transparent; }
+
+.icon-btn {
+  width: 32px; height: 32px; border-radius: 50%; border: 0; background: transparent; color: var(--on-surface-variant);
+  display: inline-grid; place-items: center; cursor: pointer; transition: background 120ms; flex: none;
+}
+.icon-btn:hover { background: var(--hover); }
+.icon-btn:active { background: var(--pressed); }
+.icon-btn .icon { width: 18px; height: 18px; }
+
+/* Text fields and selects: outlined, 8px corners, label above. */
+.field { display: grid; gap: 6px; }
+.field > span { font-size: 12px; line-height: 16px; color: var(--on-surface-variant); font-weight: 500; }
+.input, .select {
+  height: 36px; width: 100%; border-radius: 8px; border: 1px solid var(--outline); background: transparent;
+  padding: 0 12px; outline: none; transition: border-color 120ms, box-shadow 120ms;
+}
+.input:hover, .select:hover { border-color: var(--on-surface); }
+.input:focus, .select:focus { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.input[aria-invalid="true"] { border-color: var(--error); box-shadow: inset 0 0 0 1px var(--error); }
+.input::placeholder { color: var(--on-surface-variant); opacity: 1; }
+.select {
+  appearance: none; padding-right: 32px; cursor: pointer; background-repeat: no-repeat; background-position: right 10px center; background-size: 16px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23747775' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+}
+.select option { background: var(--surface); color: var(--on-surface); }
+@media (prefers-color-scheme: dark) {
+  .select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238e918f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); }
+}
+.error-text { color: var(--error); font-size: 12px; line-height: 16px; }
+
+/* Search: Chrome's pill search box. */
+.search {
+  display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 999px;
+  background: var(--surface-high); color: var(--on-surface-variant);
+}
+.search:focus-within { outline: 2px solid var(--primary); outline-offset: -2px; }
+.search input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; color: var(--on-surface); height: 100%; }
+.search input::placeholder { color: var(--on-surface-variant); opacity: 1; }
+
+/* Avatar: a container's emoji (or initial) on its tab-group colour. */
+.avatar {
+  --size: 28px;
+  width: var(--size); height: var(--size); border-radius: 50%; flex: none; position: relative;
+  display: grid; place-items: center; font-size: calc(var(--size) * 0.55); line-height: 1;
+  background: color-mix(in srgb, var(--c, var(--grey)) 22%, var(--surface));
+  color: var(--c, var(--grey)); font-weight: 600;
+}
+.avatar.lg { --size: 40px; }
+/* Dark mode: the tab-group colour itself, as Chrome's dark group chips show it; a 22% tint goes muddy. */
+@media (prefers-color-scheme: dark) {
+  .avatar:not(.none) { background: var(--c, var(--grey)); color: #1f1f1f; }
+}
+.avatar.none { background: var(--surface-high); color: var(--on-surface-variant); }
+.this-tab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--this-tab); flex: none; }
+.avatar .this-tab-dot { position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px; box-shadow: 0 0 0 2px var(--surface); }
+
+/* Menu rows: full-width, Chrome menu height and hover. */
+.row {
+  display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 16px; width: 100%;
+  border: 0; background: transparent; text-align: left; cursor: pointer; transition: background 120ms; color: inherit;
+}
+.row:hover { background: var(--hover); }
+.row:active { background: var(--pressed); }
+.row:focus-visible { outline-offset: -2px; }
+.row .icon { color: var(--on-surface-variant); }
+.row.danger, .row.danger .icon { color: var(--error); }
+.divider { height: 1px; background: var(--outline-variant); margin: 8px 0; border: 0; }
+
+/* Switch (Chrome settings' compact toggle) and checkbox. */
+.switch { position: relative; width: 36px; height: 20px; flex: none; }
+.switch input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.switch span {
+  position: absolute; inset: 0; border-radius: 999px; border: 2px solid var(--outline); background: var(--surface-high);
+  transition: background 150ms, border-color 150ms; pointer-events: none;
+}
+.switch span::after {
+  content: ""; position: absolute; left: 3px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%;
+  background: var(--outline); transition: transform 150ms cubic-bezier(.2,0,0,1), width 150ms, height 150ms, margin 150ms, background 150ms;
+}
+.switch input:checked + span { background: var(--primary); border-color: var(--primary); }
+.switch input:checked + span::after { transform: translateX(15px); width: 12px; height: 12px; margin-top: -6px; left: 2px; background: var(--on-primary); }
+.switch input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.check { display: inline-flex; align-items: center; gap: 12px; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+
+/* Settings-page cards. */
+.card { background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); }
+.card-row { display: flex; align-items: center; gap: 16px; padding: 12px 20px; min-height: 56px; }
+.card-row + .card-row { border-top: 1px solid var(--outline-variant); }
+.card-row .grow { flex: 1; min-width: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+}

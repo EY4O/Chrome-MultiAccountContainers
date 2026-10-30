@@ -4,3 +4,7 @@ test-results/
 .sandbox-profile/
 sandbox/scenarios.json
 __pycache__/
+.impeccable/questions/
+.impeccable/review/
+.impeccable/mocks/
+.impeccable/decision-payload*.json

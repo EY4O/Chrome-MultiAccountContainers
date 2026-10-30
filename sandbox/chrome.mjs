@@ -45,8 +45,28 @@ const freePort = () =>
     });
   });
 
-const isOurWorker = (t) =>
-  t.type() === "service_worker" && t.url().startsWith("chrome-extension://") && t.url().endsWith("/background.js");
+const isWorker = (t) => t.type() === "service_worker" && t.url().startsWith("chrome-extension://");
+
+/**
+ * Our extension's worker. Other extensions (Google Docs Offline, added with a
+ * Google sign-in) also name theirs background.js, so check the manifest.
+ */
+async function findOurWorker(browser) {
+  for (const t of browser.targets().filter(isWorker)) {
+    const w = await t.worker().catch(() => null);
+    const ours = await w?.evaluate(() => chrome.runtime.getManifest().content_scripts?.some((c) => c.js?.includes("content-main.js"))).catch(() => false);
+    if (ours) return t;
+  }
+  return null;
+}
+
+async function waitForOurWorker(browser, timeout) {
+  for (const end = Date.now() + timeout; Date.now() < end; await sleep(250)) {
+    const t = await findOurWorker(browser);
+    if (t) return t;
+  }
+  return null;
+}
 
 /**
  * Starts the sandbox with a localhost-only debugging port and connects to it.
@@ -64,11 +84,11 @@ export async function launch({ restore = false } = {}) {
   }
   if (!browser) throw new Error("Chrome did not open its debugging port.");
 
-  let target = await browser.waitForTarget(isOurWorker, { timeout: 5000 }).catch(() => null);
+  let target = await waitForOurWorker(browser, 5000);
   if (!target) {
     // An idle worker isn't listed; a new tab wakes it.
     const page = await browser.newPage();
-    target = await browser.waitForTarget(isOurWorker, { timeout: 10_000 }).catch(() => null);
+    target = await waitForOurWorker(browser, 10_000);
     await page.close();
   }
   if (!target) {
@@ -83,7 +103,7 @@ export async function launch({ restore = false } = {}) {
   if ((await sw.evaluate(() => globalThis.mac?.buildId).catch(() => null)) !== buildId) {
     try {
       await sw.evaluate(() => chrome.runtime.reload()).catch(() => {}); // the worker dies mid-call
-      const fresh = await browser.waitForTarget((t) => isOurWorker(t) && t !== target, { timeout: 15_000 });
+      const fresh = await browser.waitForTarget((t) => t.url() === target.url() && t !== target, { timeout: 15_000 });
       sw = await fresh.worker();
       if ((await sw.evaluate(() => globalThis.mac?.buildId)) !== buildId) throw new Error("Extension reload did not pick up the new build.");
     } catch (e) {

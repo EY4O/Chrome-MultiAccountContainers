@@ -1,0 +1,102 @@
+/* Toolbar popup: profile-menu header, extensions-menu list, tab-group-editor panel. */
+
+body { width: 340px; }
+.view.slide { animation: enter 180ms cubic-bezier(.2, 0, 0, 1); }
+@keyframes enter { from { opacity: 0; transform: translateX(8px); } }
+
+/* Header: which container this tab is in. */
+.identity { display: flex; gap: 12px; align-items: center; padding: 16px 16px 12px; }
+.identity .who { flex: 1; min-width: 0; display: grid; justify-items: start; }
+.identity .who .secondary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.select.bare {
+  height: 28px; border-color: transparent; padding-left: 0; margin-left: -1px; font-size: 15px; font-weight: 600;
+  line-height: 22px; background-position: right 2px center; padding-right: 24px; width: auto; max-width: 100%;
+  text-overflow: ellipsis;
+}
+.select.bare:hover { border-color: transparent; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--outline); }
+.select.bare:focus { box-shadow: none; border-color: transparent; outline: 2px solid var(--primary); outline-offset: 2px; }
+.page-note { color: var(--on-surface-variant); font-size: 12px; line-height: 16px; }
+
+.assign {
+  display: flex; align-items: center; gap: 8px; margin: 0 16px 12px; padding: 6px 6px 6px 12px;
+  border-radius: 12px; background: var(--surface-container);
+}
+.assign .label { flex: 1; min-width: 0; font-size: 12px; line-height: 16px; color: var(--on-surface-variant); }
+.assign .label { overflow-wrap: anywhere; }
+.assign .label b { color: var(--on-surface); font-weight: 500; }
+.assign .select { width: 136px; height: 32px; background-color: var(--surface); }
+
+.search-wrap { padding: 8px 16px 4px; }
+
+/* Container list. */
+.list { list-style: none; margin: 0; padding: 4px 0; max-height: 312px; overflow-y: auto; }
+/* Chrome caps popups at 600px: while a notice shows, the list gives up its height so the footer stays visible. */
+.notice:not([hidden]) ~ .list { max-height: 248px; }
+/* The hover band spans the whole row; the hide and edit buttons keep their own round overlay. */
+.item { position: relative; display: flex; align-items: center; transition: background 120ms; }
+.item:hover { background: var(--hover); }
+.item:has(> .row:active) { background: var(--pressed); }
+.item .row:hover, .item .row:active { background: transparent; }
+.item .row { min-height: 48px; padding-right: 16px; flex: 1; min-width: 0; }
+.item:hover .row, .item:focus-within .row, .item.is-hidden .row { padding-right: 84px; }
+.item .text { flex: 1; min-width: 0; display: grid; }
+.item .name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.item .name > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item.is-hidden .name { color: var(--on-surface-variant); }
+/* Shortcut hints sit at the right edge; on hover or focus the actions take their place. */
+.item .shortcut { color: var(--on-surface-variant); font-size: 11px; line-height: 16px; white-space: nowrap; }
+.item:hover .shortcut, .item:focus-within .shortcut, .item.is-hidden .shortcut { display: none; }
+.item .actions {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex;
+  opacity: 0; pointer-events: none; transition: opacity 120ms;
+}
+.item:hover .actions, .item:focus-within .actions, .item.is-hidden .actions { opacity: 1; pointer-events: auto; }
+.item.dragging { opacity: 0.4; }
+.item.drop-before::before, .item.drop-after::after {
+  content: ""; position: absolute; left: 16px; right: 16px; height: 2px; border-radius: 1px; background: var(--primary); z-index: 1;
+}
+.item.drop-before::before { top: -1px; }
+.item.drop-after::after { bottom: -1px; }
+
+.notice {
+  margin: 8px 16px 0; padding: 8px 12px; border-radius: 8px; display: flex; gap: 8px; align-items: flex-start;
+  background: var(--error-container); color: var(--on-error-container); font-size: 12px; line-height: 16px;
+}
+.notice .icon { width: 16px; height: 16px; margin-top: 0; }
+.empty { padding: 20px 24px 16px; display: grid; gap: 4px; justify-items: center; text-align: center; }
+.empty h2 { font-size: 13px; font-weight: 600; line-height: 20px; }
+.empty .btn { margin-top: 10px; }
+
+/* Edit panel. */
+.panel-head { display: flex; align-items: center; gap: 4px; padding: 8px 8px 4px; }
+.panel-head h1 { font-size: 15px; line-height: 22px; font-weight: 600; }
+.panel-body { padding: 8px 16px 16px; display: grid; gap: 16px; }
+.emoji-row { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
+.emoji-input { width: 72px; height: 30px; border-radius: 8px; padding: 0 8px; margin-left: 4px; font-size: 12px; }
+.emoji-input:not(:placeholder-shown) { font-size: 17px; }
+.emoji-pick {
+  width: 30px; height: 30px; border-radius: 8px; border: 0; background: transparent; font-size: 17px; line-height: 1;
+  cursor: pointer; display: grid; place-items: center; transition: background 120ms;
+}
+.emoji-pick:hover { background: var(--hover); }
+.emoji-pick[aria-pressed="true"] { background: var(--primary-container); }
+.swatches { display: flex; gap: 6px; flex-wrap: wrap; border: 0; padding: 0; margin: 0; }
+.swatch {
+  width: 28px; height: 28px; border-radius: 50%; border: 0; background: var(--c); cursor: pointer;
+  display: grid; place-items: center; color: var(--surface); transition: box-shadow 120ms;
+}
+.swatch .icon { width: 16px; height: 16px; stroke-width: 3; opacity: 0; }
+.swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--c); }
+.swatch[aria-checked="true"] .icon { opacity: 1; }
+.section-title { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--on-surface-variant); margin-bottom: 4px; }
+.sites { list-style: none; margin: 0; padding: 0; display: grid; }
+.site { display: flex; align-items: center; gap: 10px; min-height: 36px; }
+.site .icon { width: 16px; height: 16px; color: var(--on-surface-variant); }
+.site span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.edit-actions { margin: 0 -16px; }
+.confirm { margin: 4px 0 0; padding: 12px; border-radius: 12px; background: var(--surface-container); display: grid; gap: 10px; }
+.confirm p { font-size: 12px; line-height: 18px; }
+.confirm .buttons { display: flex; justify-content: flex-end; gap: 8px; }
+.panel-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--outline-variant); }
+.footer { padding-bottom: 8px; }

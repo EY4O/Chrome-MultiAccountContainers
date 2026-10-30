@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open in container?</title>
+  <link rel="icon" href="icons/icon32.png">
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    html { background: var(--surface-low); }
+    body { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
+    .card { width: min(100%, 520px); padding: 28px 28px 20px; display: grid; gap: 20px; }
+    .card header { display: grid; gap: 14px; }
+    .mark { width: 32px; height: 32px; }
+    h1 { font-size: 20px; line-height: 28px; font-weight: 400; overflow-wrap: anywhere; }
+    h1 .site { font-weight: inherit; }
+    h1 .who { display: inline-flex; align-items: baseline; gap: 8px; }
+    h1 .who .avatar { align-self: center; }
+    .body { color: var(--on-surface-variant); line-height: 20px; overflow-wrap: anywhere; }
+    .site { color: var(--on-surface); font-weight: 500; }
+    .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .actions .buttons { display: flex; gap: 8px; margin-left: auto; }
+    .status { display: flex; align-items: center; gap: 12px; }
+    .spinner { width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid var(--primary-container); border-top-color: var(--primary); animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* The default button is focused for Enter, but shows no ring until the keyboard is used. */
+    html[data-quiet-focus] :focus-visible { outline: none; }
+  </style>
+</head>
+<body>
+  <main class="card" id="app" aria-live="polite">
+    <div class="status"><span class="spinner" aria-hidden="true"></span>Checking where this site opens…</div>
+  </main>
+  <script src="prompt.js"></script>
+</body>
+</html>

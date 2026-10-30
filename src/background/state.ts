@@ -11,8 +11,48 @@ export interface Container {
   id: string;
   name: string;
   color: GroupColor;
+  /** Shown in the popup and menus, and in front of the tab group's name. */
+  emoji?: string;
   /** Prefix for the container's site storage; changes on a key reset. Defaults to id. */
   storageId?: string;
+  /** Last change to anything that syncs (name, colour, emoji, order, its site assignments). */
+  updatedAt?: number;
+}
+
+/** "Always open this host in a container." Hosts are exact. */
+export interface Assignment {
+  containerId: string;
+  /** false: switch without asking ("remember my choice" + open). */
+  ask: boolean;
+  /** true: never prompt for this host ("remember my choice" + stay). */
+  allowElsewhere?: boolean;
+}
+
+/** The tab group title for a container: its emoji, if any, then its name. */
+export function groupTitle(c: Pick<Container, "name" | "emoji">): string {
+  return c.emoji ? `${c.emoji} ${c.name}` : c.name;
+}
+
+/** Splits a tab group title back into emoji and name (inverse of groupTitle). */
+export function parseGroupTitle(title: string): { emoji?: string; name: string } {
+  const trimmed = title.trim();
+  const [first] = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(trimmed);
+  if (first && /\p{Extended_Pictographic}/u.test(first.segment)) {
+    const name = trimmed.slice(first.segment.length).trim();
+    if (name) return { emoji: first.segment, name };
+  }
+  return { name: trimmed };
+}
+
+const listeners: (() => void)[] = [];
+
+/** Called after any change to containers or site assignments (menus, sync). */
+export function onChange(fn: () => void): void {
+  listeners.push(fn);
+}
+
+function changed(): void {
+  for (const fn of listeners) fn();
 }
 
 interface SessionState {
@@ -37,6 +77,9 @@ let lastUsedSaved = 0;
  * tabs; they're forgotten when the container is deleted or reset.
  */
 let containerOrigins: Record<string, string[]> = {};
+let assignments: Record<string, Assignment> = {};
+/** containerId -> when it was deleted, so sync can delete it elsewhere too. */
+let deletedContainers: Record<string, number> = {};
 let session: SessionState = { tabContainer: {}, defaultTabs: [] };
 
 const jarKey = (id: string) => `jar:${id}`;
@@ -44,8 +87,10 @@ const keyKey = (id: string) => `key:${id}`;
 const newStorageId = () => crypto.randomUUID().slice(0, 8);
 
 export const ready: Promise<void> = (async () => {
-  const local = await chrome.storage.local.get(["containers", "lastUsed", "containerOrigins"]);
+  const local = await chrome.storage.local.get(["containers", "lastUsed", "containerOrigins", "assignments", "deletedContainers"]);
   containers = (local.containers as Container[] | undefined) ?? [];
+  assignments = (local.assignments as Record<string, Assignment> | undefined) ?? {};
+  deletedContainers = (local.deletedContainers as Record<string, number> | undefined) ?? {};
   // Before per-container tracking this was one ever-growing list; start over.
   const storedOrigins = local.containerOrigins;
   containerOrigins = storedOrigins && !Array.isArray(storedOrigins) ? (storedOrigins as Record<string, string[]>) : {};
@@ -105,22 +150,35 @@ export function getContainer(id: string): Container | undefined {
   return containers.find((c) => c.id === id);
 }
 
-export async function createContainer(name: string, color: GroupColor): Promise<Container> {
+export async function createContainer(
+  name: string,
+  color: GroupColor,
+  emoji?: string,
+  id: string = crypto.randomUUID().slice(0, 8),
+  updatedAt = Date.now(),
+): Promise<Container> {
+  name = name.trim();
+  if (!name) throw new Error("Give the container a name");
   // Tab groups are matched back to containers by name after a restart.
   if (containers.some((c) => c.name === name)) throw new Error(`A container named "${name}" already exists`);
-  const container: Container = { id: crypto.randomUUID().slice(0, 8), name, color, storageId: newStorageId() };
+  const container: Container = { id, name, color, storageId: newStorageId(), updatedAt, ...(emoji && { emoji }) };
   containers = [...containers, container];
   const key = newKey();
   keys.set(container.id, key);
   jars.set(container.id, []);
   lastUsed[container.id] = Date.now();
-  await chrome.storage.local.set({ containers, [keyKey(container.id)]: key, lastUsed });
+  delete deletedContainers[container.id];
+  await chrome.storage.local.set({ containers, [keyKey(container.id)]: key, lastUsed, deletedContainers });
   await saveJar(container.id);
+  changed();
   return container;
 }
 
-export async function deleteContainer(id: string): Promise<number[]> {
+export async function deleteContainer(id: string, deletedAt = Date.now()): Promise<number[]> {
+  if (!getContainer(id)) return [];
   containers = containers.filter((c) => c.id !== id);
+  for (const [host, a] of Object.entries(assignments)) if (a.containerId === id) delete assignments[host];
+  deletedContainers[id] = deletedAt;
   jars.delete(id);
   keys.delete(id);
   delete lastUsed[id];
@@ -128,23 +186,99 @@ export async function deleteContainer(id: string): Promise<number[]> {
   const orphanTabs = tabsOf(id);
   for (const tabId of orphanTabs) delete session.tabContainer[tabId];
   await Promise.all([
-    chrome.storage.local.set({ containers, lastUsed }),
+    chrome.storage.local.set({ containers, lastUsed, assignments, deletedContainers }),
     chrome.storage.local.remove([jarKey(id), keyKey(id)]),
     saveSession(),
   ]);
+  changed();
   return orphanTabs;
 }
 
-/** Renames or recolours a container. Names must stay unique. */
-export async function updateContainer(id: string, changes: Partial<Pick<Container, "name" | "color">>): Promise<Container> {
+export function deletedContainerTimes(): Record<string, number> {
+  return deletedContainers;
+}
+
+/** Puts containers in this order (ids not listed keep their place at the end). */
+export async function reorderContainers(ids: string[]): Promise<void> {
+  const rank = (c: Container) => (ids.includes(c.id) ? ids.indexOf(c.id) : ids.length);
+  const now = Date.now();
+  const next = [...containers].sort((a, b) => rank(a) - rank(b));
+  containers = next.map((c, i) => (containers[i]?.id === c.id ? c : { ...c, updatedAt: now }));
+  await chrome.storage.local.set({ containers });
+  changed();
+}
+
+/** Applies an order that came from elsewhere (sync) without marking anything changed. */
+export async function applyOrder(ids: string[]): Promise<void> {
+  const rank = (c: Container) => (ids.includes(c.id) ? ids.indexOf(c.id) : ids.length);
+  const next = [...containers].sort((a, b) => rank(a) - rank(b));
+  if (next.every((c, i) => c === containers[i])) return;
+  containers = next;
+  await chrome.storage.local.set({ containers });
+  changed();
+}
+
+// --- Site assignments ----------------------------------------------------------
+
+export function getAssignment(host: string): Assignment | undefined {
+  return assignments[host.toLowerCase()];
+}
+
+export function listAssignments(): Record<string, Assignment> {
+  return assignments;
+}
+
+export function assignmentsOf(containerId: string): Record<string, Assignment> {
+  return Object.fromEntries(Object.entries(assignments).filter(([, a]) => a.containerId === containerId));
+}
+
+async function touch(containerIds: string[]): Promise<void> {
+  const now = Date.now();
+  containers = containers.map((c) => (containerIds.includes(c.id) ? { ...c, updatedAt: now } : c));
+  await chrome.storage.local.set({ containers, assignments });
+  changed();
+}
+
+export async function setAssignment(host: string, assignment: Assignment | null): Promise<void> {
+  host = host.toLowerCase();
+  const before = assignments[host]?.containerId;
+  if (assignment) {
+    if (!getContainer(assignment.containerId)) throw new Error(`no container ${assignment.containerId}`);
+    assignments[host] = assignment;
+  } else {
+    delete assignments[host];
+  }
+  await touch([before, assignment?.containerId].filter((id): id is string => !!id));
+}
+
+/** Replaces one container's assignments wholesale (sync, import). */
+export async function replaceAssignmentsOf(containerId: string, next: Record<string, Omit<Assignment, "containerId">>): Promise<void> {
+  for (const [host, a] of Object.entries(assignments)) if (a.containerId === containerId) delete assignments[host];
+  for (const [host, a] of Object.entries(next)) assignments[host.toLowerCase()] = { ...a, containerId };
+  await chrome.storage.local.set({ assignments });
+  changed();
+}
+
+/** Renames, recolours or re-emojis a container. Names must stay unique. */
+export async function updateContainer(
+  id: string,
+  changes: Partial<Pick<Container, "name" | "color" | "emoji">>,
+  updatedAt = Date.now(),
+): Promise<Container> {
   const current = getContainer(id);
   if (!current) throw new Error(`no container ${id}`);
-  if (changes.name !== undefined && containers.some((c) => c.id !== id && c.name === changes.name)) {
-    throw new Error(`A container named "${changes.name}" already exists`);
+  if (changes.name !== undefined) {
+    changes = { ...changes, name: changes.name.trim() };
+    if (!changes.name) throw new Error("Give the container a name");
+    if (containers.some((c) => c.id !== id && c.name === changes.name)) {
+      throw new Error(`A container named "${changes.name}" already exists`);
+    }
   }
-  const updated = { ...current, ...changes };
+  const updated: Container = { ...current, ...changes, updatedAt };
+  if (!updated.emoji) delete updated.emoji;
   containers = containers.map((c) => (c.id === id ? updated : c));
   await chrome.storage.local.set({ containers });
+  changed();
   return updated;
 }
 

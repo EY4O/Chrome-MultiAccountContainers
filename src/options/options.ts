@@ -1,0 +1,115 @@
+// Options page: sync, backup, keyboard shortcuts, and what the extension
+// stores, in chrome://settings's card-of-rows layout.
+
+import type { Backup, SyncStatus } from "../shared/messages.ts";
+import { h, icon, send } from "../ui/dom.ts";
+
+const app = document.getElementById("app")!;
+
+function ago(ms: number): string {
+  if (!ms) return "not yet";
+  const s = Math.round((Date.now() - ms) / 1000);
+  if (s < 45) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} minute${m === 1 ? "" : "s"} ago`;
+  const hrs = Math.round(m / 60);
+  return hrs < 24 ? `${hrs} hour${hrs === 1 ? "" : "s"} ago` : new Date(ms).toLocaleString();
+}
+
+function row(title: string, detail: Node | string | null, trailing: Node | null, extra: Node | null = null): HTMLElement {
+  return h("div", { class: "card-row" },
+    h("div", { class: "grow" }, h("p", { class: "title" }, title), detail && h("p", { class: "secondary" }, detail), extra),
+    trailing);
+}
+
+async function syncSection(): Promise<HTMLElement> {
+  let status = await send<SyncStatus>({ type: "mac:sync-status" });
+  const line = h("p", { class: "secondary status-line", role: "status" });
+  const toggle = h("input", { type: "checkbox", role: "switch", "aria-label": "Sync containers and site assignments", checked: status.enabled,
+    onchange: async () => {
+      toggle.disabled = true;
+      status = await send<SyncStatus>({ type: "mac:set-sync", enabled: toggle.checked });
+      toggle.disabled = false;
+      paint();
+    } });
+  function paint(): void {
+    if (!status.enabled) line.replaceChildren(h("span", { class: "status-ok" }, "Off. Changes stay on this computer."));
+    else if (status.error) line.replaceChildren(h("span", { class: "status-bad" }, `Couldn't sync: ${status.error}`));
+    else line.replaceChildren(h("span", { class: "status-ok" }, `On. Last synced ${ago(Math.max(status.lastPush, status.lastPull))}.`));
+  }
+  paint();
+  return h("section", {},
+    h("h2", {}, "Sync"),
+    h("div", { class: "card" },
+      row("Sync containers and site assignments",
+        "Names, colours, emoji and “always open” sites sync through your Chrome account. Sign-ins and cookies never leave this computer.",
+        h("label", { class: "switch" }, toggle, h("span", {})), line)));
+}
+
+function backupSection(): HTMLElement {
+  const result = h("p", { class: "secondary", role: "status" });
+  const file = h("input", { type: "file", accept: "application/json,.json", class: "visually-hidden", tabindex: "-1",
+    onchange: async () => {
+      const chosen = file.files?.[0];
+      if (!chosen) return;
+      try {
+        const backup = JSON.parse(await chosen.text()) as Backup;
+        const r = await send<{ added: number; updated: number; sites: number }>({ type: "mac:import", backup });
+        result.className = "secondary";
+        result.textContent = `Imported: ${r.added} new, ${r.updated} updated, ${r.sites} site${r.sites === 1 ? "" : "s"}.`;
+      } catch (e) {
+        result.className = "error-text";
+        result.textContent = `Couldn't import ${chosen.name}: ${(e as Error).message}`;
+      } finally {
+        file.value = "";
+      }
+    } });
+  const exportBtn = h("button", { class: "btn", type: "button", onclick: async () => {
+    const backup = await send<Backup>({ type: "mac:export" });
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const a = h("a", { href: URL.createObjectURL(blob), download: `containers-${backup.exportedAt.slice(0, 10)}.json` });
+    a.click();
+    URL.revokeObjectURL(a.href);
+    result.className = "secondary";
+    result.textContent = `Exported ${backup.containers.length} container${backup.containers.length === 1 ? "" : "s"}.`;
+  } }, icon("download"), "Export");
+  return h("section", {},
+    h("h2", {}, "Backup"),
+    h("div", { class: "card" },
+      row("Export containers and site assignments", "Saves a file you can import on another computer. It contains no sign-ins.", exportBtn),
+      row("Import from a file", result, h("button", { class: "btn", type: "button", onclick: () => file.click() }, icon("upload"), "Import")),
+      file));
+}
+
+async function shortcutsSection(): Promise<HTMLElement> {
+  const commands = await chrome.commands.getAll();
+  const set = commands.filter((c) => c.shortcut);
+  const label = (c: chrome.commands.Command) =>
+    c.name === "_execute_action" ? "Open this popup" : c.description || c.name || "";
+  return h("section", {},
+    h("h2", {}, "Keyboard shortcuts"),
+    h("div", { class: "card" },
+      ...(set.length
+        ? set.map((c) => h("div", { class: "card-row" }, h("p", { class: "grow" }, label(c)), h("kbd", {}, c.shortcut!)))
+        : [h("div", { class: "card-row" }, h("p", { class: "grow secondary" }, "No shortcuts are set."))]),
+      h("button", { class: "card-row link-row", type: "button", onclick: () => chrome.tabs.create({ url: "chrome://extensions/shortcuts" }) },
+        h("span", { class: "grow" }, "Change keyboard shortcuts"), icon("external"))));
+}
+
+function privacySection(): HTMLElement {
+  return h("section", {},
+    h("h2", {}, "Privacy"),
+    h("div", { class: "card" },
+      h("div", { class: "card-row note" }, icon("lock"), h("div", { class: "grow" },
+        h("p", {}, "Container sign-ins are encrypted on this computer"),
+        h("p", { class: "secondary" }, "Each container's cookies are stored encrypted with their own key, separate from Chrome's."))),
+      h("div", { class: "card-row note" }, icon("signOut"), h("div", { class: "grow" },
+        h("p", {}, "Unused containers sign out after 30 days"),
+        h("p", { class: "secondary" }, "If you don't use a container for 30 days, it signs out of every site. Its name, colour and sites stay.")))));
+}
+
+async function main(): Promise<void> {
+  app.replaceChildren(await syncSection(), backupSection(), await shortcutsSection(), privacySection());
+}
+
+void main();

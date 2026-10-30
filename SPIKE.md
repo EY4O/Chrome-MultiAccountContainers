@@ -58,6 +58,24 @@ Not handled yet, roughly from most to least important:
 | Live group sync | Dragging a tab into or out of a container's group switches it and reloads it. Renaming or recolouring a container's group updates the container. An empty or duplicate name is put back. | e2e |
 | Service workers | For sites a container uses (holds cookies for, or opened as a page), workers are removed from the profile and normal pages, including ones already open, refuse new registrations. The list forgets a container's pages when it's deleted or reset. | Unit tests, e2e, sandbox |
 
+## Phase 3 (interface)
+
+The extension's pages look like native Chrome UI (Chrome's current Material styling, light and dark), modelled on the tab group editor, the profile and extensions menus, and `chrome://settings`. The only brand marks are the icon and a coral dot on the current tab's container. Design context lives in `PRODUCT.md` and `.impeccable/`.
+
+| Feature | What it does | Checked by |
+|---|---|---|
+| Popup | The header shows this tab's container (change it to move the tab) and "Always open *site* in". Below: search (Enter opens the first match), then containers with emoji, tab and site counts, and shortcut hints. Hide (collapses the tab group) and edit appear on hover or focus. Drag, or Alt+Up/Down, to reorder. Footer rows: New container, Settings. | e2e (`npm run e2e:phase3`), driving the real popup |
+| Edit panel | Name, any emoji (with quick picks), the 9 tab-group colours, the sites that always open here, sign out of everything, and delete with an inline confirm. | e2e |
+| Emoji in tab groups | A group's title is "emoji name". Renaming a group with an emoji in front updates both the name and the emoji. | e2e |
+| Site assignments | Exact host. Opening an assigned site in any other tab is redirected, before any request leaves, to a prompt with "Open in *X*" / "Stay here" and "Remember my choice". Remember + open switches automatically from then on. Remember + stay never asks again. Stay alone exempts that tab only. | Unit test on the redirect rule, e2e |
+| Right-click menus | Open link in container, reopen this tab in container (or no container), always open this site in a container. | e2e (through the click handler) |
+| Shortcuts | Ctrl+Period opens the popup; Ctrl+Shift+1/2/3 open your first three containers; containers 4 to 10 can be given keys in `chrome://extensions/shortcuts`. | e2e |
+| Sync | One `chrome.storage.sync` item per container (name, colour, emoji, order, sites), plus deletion records. The newer change wins per container. Cookies, keys and site storage never sync. Can be turned off on the options page. | e2e (simulated remote add, rename and delete) |
+| Backup | Export and import a JSON file of containers and sites. Import merges by id, and renames on a name clash. | e2e |
+| Options page | Sync switch and status, backup, current shortcuts, and privacy notes (encrypted at rest, 30-day sign-out). | e2e, screenshots |
+
+Not built: "limit a container to its assigned sites". Assignments can't tell clients apart on shared-host tools (Autotask, Intune); for those, open the client's container first.
+
 ## Running it
 
 ```bash
@@ -66,6 +84,7 @@ npm run build
 npm test          # unit: cookie semantics + DNR rule selection (simulated)
 npm run e2e       # e2e: needs Chrome for Testing; see below
 npm run e2e:restart  # close and relaunch with session restore on one profile
+npm run e2e:phase3   # popup, prompt, menus, shortcuts, sync, backup, options
 ```
 
 Branded Chrome no longer accepts `--load-extension`, so the e2e suite uses

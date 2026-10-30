@@ -29,6 +29,8 @@ const builds = [
       "content-main": "src/content/main.ts",
       "content-isolated": "src/content/isolated.ts",
       popup: "src/popup/popup.ts",
+      prompt: "src/prompt/prompt.ts",
+      options: "src/options/options.ts",
     },
     format: "iife",
   },
