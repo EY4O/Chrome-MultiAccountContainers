@@ -15,7 +15,9 @@
     "sandbox": "node sandbox/open.mjs",
     "sandbox:test": "node sandbox/run.mjs",
     "sandbox:phase2": "node sandbox/phase2.mjs",
-    "e2e:phase3": "node test/e2e-phase3.mjs"
+    "e2e:phase3": "node test/e2e-phase3.mjs",
+    "release": "node build.mjs --release",
+    "release:check": "node test/release-smoke.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.7",

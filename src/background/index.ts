@@ -269,6 +269,7 @@ async function checkStaleNavigation(details: chrome.webRequest.OnSendHeadersDeta
 /** Recent tab-lifecycle events, for diagnosing assignments (mac.events()). */
 const events: Record<string, unknown>[] = [];
 function logEvent(ev: string, data: Record<string, unknown>): void {
+  if (__RELEASE__) return;
   events.push({ t: new Date().toISOString().slice(11, 23), ev, ...data });
   if (events.length > 300) events.shift();
 }
@@ -939,7 +940,8 @@ void startup.then(() => installSync({
 }));
 
 // Test hook: the e2e suite drives the engine through the worker's global scope.
-Object.assign(globalThis, {
+// Release builds leave it out.
+if (!__RELEASE__) Object.assign(globalThis, {
   mac: {
     stats,
     openTab,
