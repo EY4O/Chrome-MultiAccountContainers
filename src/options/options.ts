@@ -231,8 +231,10 @@ function privacySection(): HTMLElement {
     h("h2", {}, "Privacy"),
     h("div", { class: "card" },
       h("div", { class: "card-row note" }, icon("lock"), h("div", { class: "grow" },
-        h("p", {}, "Container sign-ins are encrypted on this computer"),
-        h("p", { class: "secondary" }, "Each container's cookies are stored encrypted with their own key, separate from Chrome's."))),
+        h("p", {}, "Container cookies are stored encrypted"),
+        h("p", { class: "secondary" }, settings.values.keyStorage === "memory"
+          ? "Each container's cookies are encrypted with a key of their own, kept only in memory until Chrome closes. Site data such as local storage is kept apart per container, not encrypted."
+          : "Each container's cookies are encrypted with a key of their own, saved next to them on this computer. Site data such as local storage is kept apart per container, not encrypted."))),
       h("div", { class: "card-row note" }, icon("signOut"), h("div", { class: "grow" },
         h("p", {}, `Unused containers sign out after ${duration(settings.values.idleTimeoutMinutes)}`),
         h("p", { class: "secondary" }, "Signing out empties the container's cookies and makes its site data unreachable. Its name, colour and sites stay.")))));

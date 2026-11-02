@@ -77,6 +77,7 @@ export async function setUserSetting<K extends SettingKey>(key: K, value: Settin
 
 /** Test hook: pretend these values came from policy (null: back to real policy). */
 export async function setManagedForTest(values: Record<string, unknown> | null): Promise<Resolved> {
+  await ready; // else the first read could finish after this and overwrite it
   managedForTest = values;
   await reload();
   return current;

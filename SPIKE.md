@@ -76,6 +76,24 @@ The extension's pages look like native Chrome UI (Chrome's current Material styl
 
 Not built: "limit a container to its assigned sites". Assignments can't tell clients apart on shared-host tools (Autotask, Intune); for those, open the client's container first.
 
+## Hardening (managed deployments)
+
+For use with other organizations' admin sessions, reviewed against a security policy. Administrator guide: `docs/CONFIGURATION.md`.
+
+| Item | What it does | Checked by |
+|---|---|---|
+| Settings and policy | Managed value (`chrome.storage.managed`, `static/managed_schema.json`) over the user's choice over the default; managed settings are locked on the options page and refused by the worker. | Unit tests (precedence), e2e (lock shown, change refused) |
+| Keys in memory | `keyStorage: "memory"` (default) keeps jar keys in `chrome.storage.session`; a container whose key is gone gets a new key, an empty jar and a new storage prefix. Switching modes moves the keys. | e2e restart: disk stays signed in, memory signs out |
+| Idle sign-out | `idleTimeoutMinutes` (default 240), checked every 15 minutes. Only real use counts: tab activation, or a trusted click, key, wheel or touch in a container page (reported at most once a minute). | Unit test, e2e |
+| Lock sign-out | `signOutOnLock` (default on), via `chrome.idle`'s locked state. | e2e (through the same path) |
+| Device headers | Google account consistency always removed; Microsoft device sign-in and DBSC behind `stripMicrosoftDeviceHeaders` and `stripDbscHeaders` (both on). | Unit tests |
+| Sync off by default | Turning it off, by hand or by policy, removes the extension's items from `chrome.storage.sync`. | e2e |
+| Prompt page | `use_dynamic_url`: sites can't frame or open it. The worker only takes prompt messages from its top frame in its own tab; the page renders nothing when framed. | e2e |
+| Backup checks | The whole file is validated before import; one bad entry refuses it. Export and import can be turned off. | Unit tests, e2e |
+| Sign out of all | Options page, with a confirm. | e2e |
+
+Confirmed by test: a dedicated worker's requests carry its container's cookies, but IndexedDB used from inside a worker is shared with normal tabs.
+
 ## Running it
 
 ```bash

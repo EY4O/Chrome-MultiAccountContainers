@@ -312,6 +312,24 @@ try {
   await sw.evaluate(() => globalThis.mac.setLimits({ total: 5000 }));
   check("a new container tab is refused when Chrome's rule limit is full", /rule limit/.test(refused), refused);
 
+  // --- Dedicated Web Workers ------------------------------------------------------------------
+  // Workers get no content script. Their requests are tied to the page's tab, so
+  // they carry the container's cookies, but IndexedDB used from a worker isn't
+  // prefixed: it's shared with normal tabs of the same site (a documented limit).
+  const fromWorker = await p1.evaluate(async () => {
+    const code = `onmessage = async (m) => {
+      const cookie = (await (await fetch(m.data + "/echo")).json()).cookie;
+      await new Promise((ok) => { const r = indexedDB.open("from-worker", 1); r.onsuccess = () => { r.result.close(); ok(); }; });
+      postMessage(cookie);
+    };`;
+    const w = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+    return new Promise((ok) => { w.onmessage = (e) => ok(e.data); w.postMessage(location.origin); setTimeout(() => ok("timeout"), 8000); });
+  });
+  check("a dedicated worker's requests carry its container's cookies", fromWorker.includes("sid=one") && !fromWorker.includes("default"), fromWorker);
+  await reopen(dflt, "a");
+  const dbsInNormalTab = await dflt.evaluate(async () => (await indexedDB.databases()).map((d) => d.name));
+  check("known limit: IndexedDB opened from a worker is visible to normal tabs", dbsInNormalTab.includes("from-worker"), dbsInNormalTab);
+
   // --- Idle sign-out (simulated) ---------------------------------------------------------
   await freshInWork.close(); // otherwise Work is still using fresh.localhost when it resets
   const HOUR = 60 * 60_000;

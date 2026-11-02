@@ -24,9 +24,10 @@ A Chrome extension that brings the idea of Firefox's Multi-Account Containers to
 - 🔐 **Separate sign-ins**: cookies, `localStorage`, `sessionStorage` and IndexedDB are kept apart per container, and Chrome's own Google and Microsoft device sign-in can't leak into a container.
 - 📌 **Always open this site in…**: assign a site to a container; opening it anywhere else asks "Open in Contoso?" before a single request leaves the tab.
 - 🔄 **Survives restarts**: container tabs come back signed in after Chrome restarts, restored from their tab groups.
-- 🕒 **Encrypted, and forgets on its own**: each container's sign-ins are encrypted on disk, and a container left unused for 30 days is signed out of everything.
+- 🕒 **Signs itself out**: by default a container signs out when Chrome closes, after 4 hours without use, and when the computer locks; each can be changed.
+- 🏢 **Ready for managed computers**: an administrator can set and lock every security setting through Chrome policy (see the [configuration guide](docs/CONFIGURATION.md)).
 - 🖱️ **Right-click and keyboard**: open a link in a container, reopen a tab in another one, and open containers with **Ctrl+Shift+1/2/3** (**Ctrl+Period** opens the popup).
-- ☁️ **Sync and backup**: container names, colours, emoji and site assignments sync through your Chrome account; sign-ins never leave the computer. Export and import a backup file too.
+- ☁️ **Optional sync and backup**: container names, colours, emoji and site assignments can sync through your Chrome account (off by default); sign-ins never leave the computer. Export and import a backup file too.
 - 🎨 **Looks like Chrome**: the popup, prompt and settings follow Chrome's own Material styling, light and dark.
 
 ## 📸 Screenshots
@@ -75,7 +76,7 @@ Then load the `dist` folder with **Load unpacked**, as in Option 1.
 
 ### Option 3: **Managed computers**
 
-On Windows machines you manage with Intune or Group Policy, Chrome can install it for everyone with the `ExtensionInstallForcelist` policy, pointing at a self-hosted package. See Google's [Chrome Enterprise guide](https://support.google.com/chrome/a/answer/2714278).
+On computers you manage with Intune, Group Policy or the Google Admin console, Chrome can install it for everyone and lock its settings. The **[configuration guide](docs/CONFIGURATION.md)** covers the extension ID, every policy setting with an example, recommended values, and offboarding.
 
 <details>
 <summary><b>Recommended Chrome setting</b></summary>
@@ -90,6 +91,8 @@ Chrome's own Google sign-in (the profile picture at the top right) can sign the 
 3. Sign in to a site there. Open the same site in a normal tab: you're not signed in there.
 4. To keep a site in one container, open the popup on that site and pick a container under **Always open *site* in**.
 5. Right-click a link and choose **Open link in container** to send it straight to one.
+
+Containers sign out when Chrome closes, after 4 hours without use, and when the computer locks. To stay signed in across restarts, turn on **Settings → Stay signed in after Chrome closes**.
 
 ---
 
@@ -116,20 +119,27 @@ Some tools serve every customer from the same address (Autotask, Intune), so a s
 </details>
 
 <details>
-<summary><b>🛡️ Privacy and security</b></summary>
+<summary><b>🛡️ Security model</b></summary>
 
-- Sign-ins (cookies and site data) stay on this computer and are encrypted with AES-256-GCM, one key per container.
-- A container unused for 30 days gets a new key and an empty cookie jar: it's signed out of everything. Its name, colour and sites stay.
-- **Sign out of everything** in the edit panel does the same on demand.
-- Only names, colours, emoji, order and site assignments sync, through Chrome's own sync storage. Turn it off in **Settings**.
-- No servers, no analytics; the extension makes no network requests of its own.
-- Container tabs drop the headers Chrome uses to sign the browser in to Google and to Microsoft with the device's work account, so a container can't sign in as you by accident. A side effect: your own company's "compliant device" checks won't pass inside a container, so use a normal tab for your own tenant.
+**What containers are for.** They stop *accidental* cross-account sign-in: a client's portal opened in the wrong tab, a personal account leaking into a work session, Chrome's own sign-in turning up inside a container. They are **not** a security boundary against a malicious or compromised website. A container runs in the same browser profile as everything else, and a hostile page could find ways around separation done inside the page.
+
+**What's protected, and how.**
+
+- **Cookies** are kept out of Chrome's cookie store. Each container's cookies are stored encrypted (AES-256-GCM) with a key of its own.
+- **Where that key lives** depends on **Stay signed in after Chrome closes** (`keyStorage`). Off (the default): only in Chrome's memory for the browser session, so closing Chrome, or updating the extension, signs every container out. On: in the extension's storage on disk, next to the encrypted cookies. Then the encryption only keeps cookies out of plain sight; someone who can read the whole profile can read them.
+- **Site storage** (`localStorage`, `sessionStorage`, IndexedDB) is kept apart *inside the page*: each container's keys get their own prefix in the site's normal storage. It is **not encrypted**. Signing a container out changes its prefix, so tokens sites left there become unreachable, but the old data stays in the site's storage until browsing data is cleared.
+- **Web Workers** get no content script. A dedicated worker's requests still carry its container's cookies, but IndexedDB used from inside a worker is **not** separated: normal tabs of the same site share it. The test suite checks both.
+- **Signing out**: a new key, an empty cookie jar and a new storage prefix. It happens on demand (**Sign out of everything** in the edit panel, **Sign out of all containers** in Settings), after the idle timeout (4 hours by default, counting only real use: switching to a tab, clicking, typing or scrolling), when the computer locks, and, by default, when Chrome closes.
+- **Device sign-in** is kept out of container tabs: the headers Chrome uses to sign the browser in to Google (always), Windows' Microsoft device sign-in, and Device Bound Session Credentials (both settings, on by default). A side effect of the Microsoft one: Conditional Access rules that require a compliant device will block container tabs, so use a normal tab for your own organization's tenant.
+- **Sync** is off by default. When on, it sends container names, colours, emoji and the addresses of assigned sites (not sign-ins) to the Google account the Chrome profile is signed in to. Turning it off removes them from the account.
+- **The "Open in…?" page** can't be loaded or framed by websites, so a site can't use it to move a tab into a container.
+- **No servers, no analytics:** the extension makes no network requests of its own.
 </details>
 
 <details>
 <summary><b>⚠️ Known limits</b></summary>
 
-- The HTTP cache, Cache API, BroadcastChannel and SharedWorkers are shared between containers. Sign-ins aren't affected, but a site could tell it's been visited before.
+- The HTTP cache, Cache API, BroadcastChannel and SharedWorkers are shared between containers, and so is IndexedDB used from inside a Web Worker. Cookies aren't affected, but a site could tell it's been visited before, and a site that keeps tokens in worker IndexedDB shares them with normal tabs.
 - A cookie set during a redirect inside a background request (rare, on some sign-in flows) can be missed, and the site may ask you to sign in again.
 - Dragging a single tab to a new window takes it out of its group, so it leaves the container. Dragging the whole group keeps it.
 - Chrome limits how many rules an extension can have; with very many busy containers, the least recently used ones are signed out rather than leaked.
@@ -144,9 +154,10 @@ Some tools serve every customer from the same address (Autotask, Intune), so a s
 | Read and change data on all websites | Set and capture each container's cookies on whatever sites you use |
 | `declarativeNetRequest`, `webRequest` | Rewrite cookie headers per tab, and see the cookies sites set |
 | `tabs`, `tabGroups`, `webNavigation` | Know which tab belongs to which container, and keep tab groups in step |
-| `storage`, `unlimitedStorage` | Keep containers and their encrypted cookie jars |
+| `storage`, `unlimitedStorage` | Keep containers and their encrypted cookie jars, and read settings set by Chrome policy |
 | `browsingData` | Remove a site's service workers so they can't answer for a container |
-| `alarms` | The hourly check for containers unused for 30 days |
+| `alarms` | The 15-minute check for containers past the idle timeout |
+| `idle` | Notice when the computer locks, to sign containers out (no network access) |
 | `contextMenus` | The right-click menus |
 </details>
 

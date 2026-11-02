@@ -9,3 +9,4 @@ __pycache__/
 .impeccable/mocks/
 .impeccable/decision-payload*.json
 release/
+private/

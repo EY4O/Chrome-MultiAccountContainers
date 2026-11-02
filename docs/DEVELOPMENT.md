@@ -33,7 +33,7 @@ Load `dist/` with **Load unpacked** in `chrome://extensions`. After a rebuild, p
 
 ## Tests
 
-The end-to-end suites use Puppeteer's Chrome for Testing. Install it once with `npx puppeteer browsers install chrome`; set `CHROME_PATH` if it's somewhere else. Run `npm run build` first. `HEADFUL=1` shows the browser.
+The end-to-end suites use Puppeteer's Chrome for Testing. Install it once with `npx puppeteer browsers install chrome`; set `CHROME_PATH` if it's somewhere else. Run `npm run build` first. `HEADFUL=1` shows the browser. The suites can't set real Chrome policy, so development builds let them stand in for it (`mac.setManaged`); release builds leave that out.
 
 ```
 npm test
@@ -44,10 +44,10 @@ npm run e2e:phase3
 
 | Suite | Covers |
 |---|---|
-| `npm test` | Cookie parsing and matching, the rule builder (against Chrome's cookie rules), encryption |
-| `e2e` | Isolation of cookies and storage across tabs, frames, redirects, popups and new tabs; Set-Cookie capture; rule budget; 30-day reset; service workers; identity headers |
-| `e2e:restart` | Containers and sign-ins come back after a browser restart |
-| `e2e:phase3` | The real popup, edit panel, emoji and tab-group titles, site assignments and the prompt, menus, shortcuts, sync, backup |
+| `npm test` | Cookie parsing and matching, the rule builder (against Chrome's cookie rules, and the device-header settings), encryption, settings precedence, idle threshold, backup validation |
+| `e2e` | Isolation of cookies and storage across tabs, frames, redirects, popups and new tabs; Set-Cookie capture; rule budget; idle sign-out (real use only); service workers; dedicated workers; identity headers |
+| `e2e:restart` | Containers come back after a browser restart: signed in with keys on disk, signed out with keys in memory |
+| `e2e:phase3` | The real popup, edit panel, emoji and tab-group titles, site assignments and the prompt (and that sites can't use it), menus, shortcuts, sync, backup checks, managed settings, sign out of all, sign out on lock |
 | `release:check` | The upload package: no source maps or test hooks, and isolation still works |
 
 ### Real-Chrome sandbox
