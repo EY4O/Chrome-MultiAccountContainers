@@ -1,6 +1,6 @@
 {
   "name": "chrome-multiaccountcontainers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Separate sign-ins per tab for Chrome: containers that keep their own cookies and site data, shown as tab groups.",
   "license": "MIT",
   "repository": {

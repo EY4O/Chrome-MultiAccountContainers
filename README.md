@@ -14,7 +14,7 @@ A Chrome extension that brings the idea of Firefox's Multi-Account Containers to
 
 ![The Containers popup in light and dark mode](docs/images/hero.png)
 
-> **🚧 Early release (0.1.0).** Tested daily with Gmail, Discord and GitHub, and by automated suites. Not yet on the Chrome Web Store, so it installs with **Load unpacked**. This is an independent project, not made by or affiliated with Mozilla.
+> **🚧 Early release (0.2.0).** Tested daily with Gmail, Discord and GitHub, and by automated suites. Not yet on the Chrome Web Store, so it installs with **Load unpacked**. This is an independent project, not made by or affiliated with Mozilla.
 
 ---
 
@@ -45,7 +45,7 @@ A Chrome extension that brings the idea of Firefox's Multi-Account Containers to
 
 ### Option 1: **Release download** (Recommended)
 
-1. Download `containers-0.1.0.zip` from the [latest release](https://github.com/EY4O/Chrome-MultiAccountContainers/releases) and unzip it to a folder you'll keep.
+1. Download the `containers-<version>.zip` file from the [latest release](https://github.com/EY4O/Chrome-MultiAccountContainers/releases) and unzip it to a folder you'll keep.
 2. Open `chrome://extensions` and turn on **Developer mode**.
 3. Click **Load unpacked** and pick the unzipped folder (the one with `manifest.json`).
 4. Pin **Containers** to the toolbar.
@@ -195,6 +195,7 @@ If Containers saves you from signing in and out all day, you can support its dev
 
 Each version's full notes are on its [release page](https://github.com/EY4O/Chrome-MultiAccountContainers/releases).
 
+- **0.2.0**: Hardened for managed computers: containers sign out when Chrome closes, after 4 hours without use and when the computer locks, sync is off by default, and an administrator can lock every security setting through Chrome policy.
 - **0.1.0**: First release: containers as tab groups with separate sign-ins, site assignments, right-click menus, shortcuts, sync and backup.
 
 </details>
