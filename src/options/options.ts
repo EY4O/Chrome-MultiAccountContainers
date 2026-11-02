@@ -122,6 +122,17 @@ function signInSection(): HTMLElement {
         "Every container signs out of every site when you lock the computer or it locks itself.")));
 }
 
+/** The device-identity headers kept out of container tabs (see rules.ts). */
+function deviceSection(): HTMLElement {
+  return h("section", {},
+    h("h2", {}, "Device sign-in"),
+    h("div", { class: "card" },
+      switchRow("stripMicrosoftDeviceHeaders", "Keep Windows' Microsoft sign-in out of containers",
+        "Stops Windows signing container tabs in with this computer's own work account. While this is on, sites that require a compliant device won't accept container tabs."),
+      switchRow("stripDbscHeaders", "Keep device-bound sessions out of containers",
+        "Stops Chrome tying a container's sign-in to this profile's own cookies. While this is on, container tabs don't get Chrome's protection against stolen session cookies.")));
+}
+
 function backupSection(): HTMLElement {
   const result = h("p", { class: "secondary", role: "status" });
   const file = h("input", { type: "file", accept: "application/json,.json", class: "visually-hidden", tabindex: "-1",
@@ -186,7 +197,7 @@ function privacySection(): HTMLElement {
 
 async function main(): Promise<void> {
   settings = await send<Resolved>({ type: "mac:settings" });
-  app.replaceChildren(signInSection(), await syncSection(), backupSection(), await shortcutsSection(), privacySection());
+  app.replaceChildren(signInSection(), await syncSection(), deviceSection(), backupSection(), await shortcutsSection(), privacySection());
 }
 
 void main();

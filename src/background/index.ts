@@ -102,6 +102,8 @@ function sharedRuleInputs() {
     knownTabIds: state.knownTabIds(),
     noServiceWorkerHosts: serviceWorkerHosts(),
     promptUrl: chrome.runtime.getURL("prompt.html"),
+    stripMicrosoftDeviceHeaders: settings.get().stripMicrosoftDeviceHeaders,
+    stripDbscHeaders: settings.get().stripDbscHeaders,
     assignmentRedirects: [...byContainer].map(([containerId, hosts]) => ({
       hosts,
       excludedTabIds: [...state.tabsOf(containerId), ...(exemptTabs.get(containerId) ?? [])],
@@ -801,6 +803,11 @@ chrome.runtime.onMessage.addListener((msg: BgMessage, sender, sendResponse) => {
 // the session state and session rules are gone, and the lockdown rule is
 // blocking every tab. Restored tabs get their container back from the tab
 // group they were restored into; then the blocked loads are replayed.
+// The device-header settings change the container tabs' rules.
+settings.onSettingsChange((next, prev) => {
+  if (next.stripMicrosoftDeviceHeaders !== prev.stripMicrosoftDeviceHeaders || next.stripDbscHeaders !== prev.stripDbscHeaders) void scheduleSync();
+});
+
 const startup: Promise<{ httpTabs: number }> = state.ready
   .then(async () => {
     const tabs = await chrome.tabs.query({});

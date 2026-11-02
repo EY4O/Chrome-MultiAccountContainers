@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { LOCKDOWN_RULE, buildRules, ruleUsage, serviceWorkerHosts } from "../../src/background/rules.ts";
+import {
+  DBSC_RESPONSE_HEADERS,
+  GOOGLE_ACCOUNT_REQUEST_HEADERS,
+  GOOGLE_ACCOUNT_RESPONSE_HEADERS,
+  LOCKDOWN_RULE,
+  MICROSOFT_DEVICE_REQUEST_HEADERS,
+  buildRules,
+  ruleUsage,
+  serviceWorkerHosts,
+} from "../../src/background/rules.ts";
 import { type Cookie, type SiteContext, cookiesForUrl, parseSetCookie, serialize } from "../../src/shared/cookie.ts";
 
 const now = 1_700_000_000_000;
@@ -175,5 +184,31 @@ test("only known tabs and tabless requests escape the lockdown", () => {
   assert.ok(allow.priority! > LOCKDOWN_RULE.priority!, "allow beats the lockdown");
   for (const r of rules.filter((r) => r.action.type === "modifyHeaders")) {
     assert.ok(r.priority! > allow.priority!, `allow must not suppress modifyHeaders rule ${r.id}`);
+  }
+});
+
+test("device headers are removed by default, and each setting turns its own group off", () => {
+  const removed = (flags: { stripMicrosoftDeviceHeaders?: boolean; stripDbscHeaders?: boolean }) => {
+    const rules = buildRules({ containers: [{ id: "c1", tabIds: [1], cookies: [] }], knownTabIds: [1], now, ...flags });
+    const fallback = rules.find((r) => r.action.requestHeaders?.some((h) => h.header === "cookie"))!;
+    return {
+      req: fallback.action.requestHeaders!.map((h) => h.header),
+      res: fallback.action.responseHeaders!.map((h) => h.header),
+    };
+  };
+  const has = (list: string[], headers: string[]) => headers.every((h) => list.includes(h));
+  const none = (list: string[], headers: string[]) => headers.every((h) => !list.includes(h));
+  for (const flags of [{}, { stripMicrosoftDeviceHeaders: true, stripDbscHeaders: true }]) {
+    const { req, res } = removed(flags);
+    assert.ok(has(req, MICROSOFT_DEVICE_REQUEST_HEADERS) && has(res, DBSC_RESPONSE_HEADERS), "both on");
+  }
+  const noMs = removed({ stripMicrosoftDeviceHeaders: false });
+  assert.ok(none(noMs.req, MICROSOFT_DEVICE_REQUEST_HEADERS) && has(noMs.res, DBSC_RESPONSE_HEADERS), "Microsoft off, DBSC on");
+  const noDbsc = removed({ stripDbscHeaders: false });
+  assert.ok(has(noDbsc.req, MICROSOFT_DEVICE_REQUEST_HEADERS) && none(noDbsc.res, DBSC_RESPONSE_HEADERS), "DBSC off, Microsoft on");
+  for (const flags of [{}, { stripMicrosoftDeviceHeaders: false, stripDbscHeaders: false }]) {
+    const { req, res } = removed(flags);
+    assert.ok(has(req, [...GOOGLE_ACCOUNT_REQUEST_HEADERS, "cookie"]) && has(res, [...GOOGLE_ACCOUNT_RESPONSE_HEADERS, "set-cookie"]),
+      "Google account headers and the real cookies are always removed");
   }
 });

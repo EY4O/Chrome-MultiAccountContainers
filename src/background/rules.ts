@@ -55,6 +55,10 @@ export interface RuleBuildInput {
   assignmentRedirects?: { hosts: string[]; excludedTabIds: number[] }[];
   /** chrome-extension://.../prompt.html; the original URL follows the '#'. */
   promptUrl?: string;
+  /** Remove Windows' Microsoft device sign-in headers in container tabs (default true). */
+  stripMicrosoftDeviceHeaders?: boolean;
+  /** Remove Device Bound Session Credentials headers in container tabs (default true). */
+  stripDbscHeaders?: boolean;
   now?: number;
 }
 
@@ -160,25 +164,31 @@ const P_ASSIGN = 2_000_000_000;
 const ASSIGN_CHUNK = 20;
 
 /**
- * Headers through which a site hands an identity to the browser itself, or the
- * browser hands the device's identity to a site (Windows/Entra ID single
- * sign-on adds the device's refresh token to login.microsoftonline.com).
+ * Chrome account consistency: how Google hands an account to the browser
+ * itself. Always removed in container tabs; this is what stops a container's
+ * Google sign-in becoming Chrome's (and the real profile's).
  */
-export const BROWSER_IDENTITY_REQUEST_HEADERS = [
-  "x-chrome-id-consistency-request",
-  "x-chrome-connected",
-  "x-ms-refreshtokencredential",
-  "x-ms-devicecredential",
-];
-export const BROWSER_IDENTITY_RESPONSE_HEADERS = [
+export const GOOGLE_ACCOUNT_REQUEST_HEADERS = ["x-chrome-id-consistency-request", "x-chrome-connected"];
+export const GOOGLE_ACCOUNT_RESPONSE_HEADERS = [
   "x-chrome-id-consistency-response",
   "x-chrome-manage-accounts",
   "google-accounts-signin",
   "google-accounts-signout",
   "google-accounts-remove-local-account",
-  "sec-session-registration",
-  "sec-session-challenge",
 ];
+/**
+ * Windows/Entra ID single sign-on: Chrome adds the device's own refresh token
+ * to login.microsoftonline.com. Removing it keeps containers from signing in
+ * as the device's work account; it also means "compliant device" checks fail.
+ */
+export const MICROSOFT_DEVICE_REQUEST_HEADERS = ["x-ms-refreshtokencredential", "x-ms-devicecredential"];
+/**
+ * Device Bound Session Credentials: a site asks Chrome to bind the session to
+ * this device and refresh its cookies itself, in the profile's real cookie
+ * store. Removing them keeps container sessions out of it, at the cost of
+ * DBSC's stolen-cookie protection in container tabs.
+ */
+export const DBSC_RESPONSE_HEADERS = ["sec-session-registration", "sec-session-challenge"];
 
 export const LOCKDOWN_RULE: Rule = {
   id: 1,
@@ -193,6 +203,8 @@ export function buildRules({
   noServiceWorkerHosts = [],
   assignmentRedirects = [],
   promptUrl = "",
+  stripMicrosoftDeviceHeaders = true,
+  stripDbscHeaders = true,
   now = Date.now(),
 }: RuleBuildInput): Rule[] {
   const rules: Rule[] = [];
@@ -222,8 +234,16 @@ export function buildRules({
       priority: P_FALLBACK,
       action: {
         type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
-        requestHeaders: [...BROWSER_IDENTITY_REQUEST_HEADERS, "cookie"].map(remove),
-        responseHeaders: [...BROWSER_IDENTITY_RESPONSE_HEADERS, "set-cookie"].map(remove),
+        requestHeaders: [
+          ...GOOGLE_ACCOUNT_REQUEST_HEADERS,
+          ...(stripMicrosoftDeviceHeaders ? MICROSOFT_DEVICE_REQUEST_HEADERS : []),
+          "cookie",
+        ].map(remove),
+        responseHeaders: [
+          ...GOOGLE_ACCOUNT_RESPONSE_HEADERS,
+          ...(stripDbscHeaders ? DBSC_RESPONSE_HEADERS : []),
+          "set-cookie",
+        ].map(remove),
       },
       condition: { tabIds: allContainerTabs, resourceTypes: ALL_TYPES },
     });
