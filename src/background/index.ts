@@ -767,6 +767,8 @@ async function handle(msg: BgMessage, sender: chrome.runtime.MessageSender): Pro
       for (const tabId of state.tabsOf(msg.id)) chrome.tabs.reload(tabId).catch(() => {});
       return null;
     }
+    case "mac:sign-out-all":
+      return signOut(state.listContainers().map((c) => c.id), "sign-out-all");
     case "mac:reopen":
       await reopenTab(msg.tabId, msg.id);
       return null;

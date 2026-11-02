@@ -98,6 +98,40 @@ function idleRow(): HTMLElement {
     select, isLocked("idleTimeoutMinutes") ? lockedNote() : null);
 }
 
+/**
+ * Signs every container out at once: for a lost or handed-over computer, or
+ * when someone leaves. Asks first, in place, like the popup's delete.
+ */
+function signOutAllRow(): HTMLElement {
+  const status = h("p", { class: "secondary", role: "status" });
+  const slot = h("div", {});
+  const start = h("button", { class: "btn danger", type: "button", onclick: () => {
+    start.hidden = true;
+    const box = h("div", { class: "confirm", role: "alertdialog", "aria-label": "Sign out of all containers" },
+      h("p", {}, "Every container will be signed out of every site, and its open tabs will reload. Names, colours and sites stay."),
+      h("div", { class: "buttons" },
+        h("button", { class: "btn text", type: "button", onclick: () => {
+          slot.replaceChildren();
+          start.hidden = false;
+          start.focus();
+        } }, "Cancel"),
+        h("button", { class: "btn danger filled", type: "button", onclick: async () => {
+          try {
+            const names = await send<string[]>({ type: "mac:sign-out-all" });
+            status.textContent = names.length ? `Signed out of ${names.length} container${names.length === 1 ? "" : "s"}.` : "There were no containers to sign out.";
+          } catch (e) {
+            status.textContent = `Couldn't sign out: ${(e as Error).message}`;
+          }
+          slot.replaceChildren();
+          start.hidden = false;
+        } }, "Sign out")));
+    slot.replaceChildren(box);
+    box.querySelector<HTMLElement>(".filled")?.focus();
+  } }, icon("signOut"), "Sign out");
+  return row("Sign out of all containers", "For a lost or handed-over computer, or when you leave. Signs every container out of every site now.", start,
+    h("div", {}, status, slot));
+}
+
 /** How long container sign-ins last. */
 function signInSection(): HTMLElement {
   const keep = h("input", { type: "checkbox", role: "switch", "aria-label": "Stay signed in after Chrome closes",
@@ -119,7 +153,8 @@ function signInSection(): HTMLElement {
         h("label", { class: "switch" }, keep, h("span", {})), isLocked("keyStorage") ? lockedNote() : null),
       idleRow(),
       switchRow("signOutOnLock", "Sign out when this computer locks",
-        "Every container signs out of every site when you lock the computer or it locks itself.")));
+        "Every container signs out of every site when you lock the computer or it locks itself."),
+      signOutAllRow()));
 }
 
 /** The device-identity headers kept out of container tabs (see rules.ts). */

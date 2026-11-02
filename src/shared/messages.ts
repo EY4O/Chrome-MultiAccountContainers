@@ -59,6 +59,7 @@ export type BgMessage =
   | { type: "mac:reorder"; ids: string[] }
   | { type: "mac:hide"; id: string; hidden: boolean }
   | { type: "mac:reset"; id: string }
+  | { type: "mac:sign-out-all" }
   | { type: "mac:delete"; id: string }
   | { type: "mac:open"; id: string; url?: string; windowId?: number }
   | { type: "mac:reopen"; tabId: number; id: string | null }

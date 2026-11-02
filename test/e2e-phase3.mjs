@@ -340,6 +340,27 @@ try {
   check("without the policy the user's choice applies again",
     (await mac(() => globalThis.mac.settings())).values.syncEnabled === userSettings.values.syncEnabled);
 
+  // --- Sign out of all containers --------------------------------------------------------------
+  const contosoNow = await named("Contoso Ltd") ?? await named("Contoso");
+  const signedIn = await normalTab(u("e", "/page?before"));
+  await mac((url, id) => globalThis.mac.openTab(url, id), u("e", "/page?all"), contosoNow.id);
+  const allPage = await (await browser.waitForTarget((t) => t.url() === u("e", "/page?all"))).page();
+  await allPage.waitForFunction(() => document.readyState === "complete");
+  await allPage.evaluate(async () => { await fetch(`/set?c=${encodeURIComponent("sid=c; Path=/; Max-Age=3600")}`); });
+  await sleep(300);
+  await remover.bringToFront();
+  await remover.reload();
+  await remover.waitForSelector(".card");
+  const [signOutButton] = await remover.$$("xpath/.//button[contains(., 'Sign out') and contains(@class, 'danger')]");
+  await signOutButton.click();
+  await remover.waitForSelector('.confirm[aria-label="Sign out of all containers"]');
+  check("Sign out of all containers asks first", (await mac((id) => globalThis.mac.getJar(id), contosoNow.id)).some((c) => c.name === "sid"));
+  await remover.click(".confirm .btn.filled");
+  await remover.waitForFunction(() => /Signed out of \d+ container/.test(document.body.innerText), { timeout: 5000 });
+  const jarsAfter = await mac(async () => (await Promise.all(globalThis.mac.listContainers().map((c) => globalThis.mac.getJar(c.id)))).flat().length);
+  check("...then empties every container's cookies", jarsAfter === 0, jarsAfter);
+  await signedIn.close();
+
   // --- Sign out when the computer locks --------------------------------------------------------
   await mac(() => globalThis.mac.setManaged({ signOutOnLock: false }));
   check("with sign-out-on-lock off, locking signs nothing out", (await mac(() => globalThis.mac.lockScreen())).length === 0);
