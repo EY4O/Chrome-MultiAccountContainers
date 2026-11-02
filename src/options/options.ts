@@ -70,6 +70,34 @@ async function syncSection(): Promise<HTMLElement> {
         line, paint)));
 }
 
+const IDLE_CHOICES = [60, 120, 240, 480, 1440, 10080, 43200];
+
+/** "4 hours", "1 day", "90 minutes". */
+function duration(minutes: number): string {
+  const unit = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (minutes % 1440 === 0) return unit(minutes / 1440, "day");
+  if (minutes % 60 === 0) return unit(minutes / 60, "hour");
+  return unit(minutes, "minute");
+}
+
+function idleRow(): HTMLElement {
+  const current = settings.values.idleTimeoutMinutes;
+  const choices = IDLE_CHOICES.includes(current) ? IDLE_CHOICES : [...IDLE_CHOICES, current].sort((a, b) => a - b);
+  const select = h("select", { class: "select", "aria-label": "Sign out a container after it's unused for", disabled: isLocked("idleTimeoutMinutes"),
+    onchange: async () => {
+      select.disabled = true;
+      try {
+        await setSetting("idleTimeoutMinutes", Number(select.value));
+      } finally {
+        select.value = String(settings.values.idleTimeoutMinutes);
+        select.disabled = isLocked("idleTimeoutMinutes");
+      }
+    } }, ...choices.map((m) => h("option", { value: String(m), selected: m === current }, duration(m))));
+  return row("Sign out a container after it's unused for",
+    "Using a container means switching to one of its tabs, or clicking, typing or scrolling in it. Pages that refresh themselves in the background don't count.",
+    select, isLocked("idleTimeoutMinutes") ? lockedNote() : null);
+}
+
 /** How long container sign-ins last. */
 function signInSection(): HTMLElement {
   const keep = h("input", { type: "checkbox", role: "switch", "aria-label": "Stay signed in after Chrome closes",
@@ -88,7 +116,10 @@ function signInSection(): HTMLElement {
     h("div", { class: "card" },
       row("Stay signed in after Chrome closes",
         "When this is off, each container's key is kept only while Chrome is open, so closing Chrome signs every container out. When it's on, keys are saved on this computer next to the encrypted cookies.",
-        h("label", { class: "switch" }, keep, h("span", {})), isLocked("keyStorage") ? lockedNote() : null)));
+        h("label", { class: "switch" }, keep, h("span", {})), isLocked("keyStorage") ? lockedNote() : null),
+      idleRow(),
+      switchRow("signOutOnLock", "Sign out when this computer locks",
+        "Every container signs out of every site when you lock the computer or it locks itself.")));
 }
 
 function backupSection(): HTMLElement {
@@ -149,8 +180,8 @@ function privacySection(): HTMLElement {
         h("p", {}, "Container sign-ins are encrypted on this computer"),
         h("p", { class: "secondary" }, "Each container's cookies are stored encrypted with their own key, separate from Chrome's."))),
       h("div", { class: "card-row note" }, icon("signOut"), h("div", { class: "grow" },
-        h("p", {}, "Unused containers sign out after 30 days"),
-        h("p", { class: "secondary" }, "If you don't use a container for 30 days, it signs out of every site. Its name, colour and sites stay.")))));
+        h("p", {}, `Unused containers sign out after ${duration(settings.values.idleTimeoutMinutes)}`),
+        h("p", { class: "secondary" }, "Signing out empties the container's cookies and makes its site data unreachable. Its name, colour and sites stay.")))));
 }
 
 async function main(): Promise<void> {

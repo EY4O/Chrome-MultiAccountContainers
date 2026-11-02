@@ -50,6 +50,19 @@ chrome.runtime.onMessage.addListener((msg: { type?: string }) => {
 // The navigation-time snapshot can be stale (e.g. Strict cookies are left off a
 // cross-site navigation), so container documents always ask for a fresh one.
 const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
-if (nav?.serverTiming.some((t) => t.name === MARKER) || /^(about|blob|data):/.test(location.protocol)) {
+const inContainer = nav?.serverTiming.some((t) => t.name === MARKER);
+if (inContainer || /^(about|blob|data):/.test(location.protocol)) {
   void refresh();
+}
+
+// A person clicking, typing or scrolling keeps the container from signing out
+// as idle; a page polling in the background doesn't. At most once a minute.
+let lastActivity = 0;
+function activity(e: Event): void {
+  if (!e.isTrusted || Date.now() - lastActivity < 60_000) return;
+  lastActivity = Date.now();
+  send({ type: "mac:activity" }).catch(() => {});
+}
+if (inContainer) {
+  for (const type of ["pointerdown", "keydown", "wheel", "touchstart"]) addEventListener(type, activity, { capture: true, passive: true });
 }

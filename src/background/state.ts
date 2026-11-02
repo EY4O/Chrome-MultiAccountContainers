@@ -4,6 +4,7 @@
 
 import type { Cookie } from "../shared/cookie.ts";
 import { type Sealed, isSealed, newKey, seal, unseal } from "../shared/crypto.ts";
+import { idleIds } from "../shared/idle.ts";
 import * as settings from "./settings.ts";
 
 export type GroupColor = `${chrome.tabGroups.Color}`;
@@ -344,16 +345,21 @@ export async function resetContainer(id: string): Promise<void> {
   await saveJar(id);
 }
 
-/** Containers with no use for at least `maxIdleMs`. */
-export function idleContainers(maxIdleMs: number, now = Date.now()): Container[] {
-  return containers.filter((c) => now - lastUsedAt(c.id) >= maxIdleMs);
+/** Containers with no use for at least `timeoutMinutes`. */
+export function idleContainers(timeoutMinutes: number, now = Date.now()): Container[] {
+  const ids = idleIds(lastUsed, containers.map((c) => c.id), timeoutMinutes, now);
+  return containers.filter((c) => ids.includes(c.id));
 }
 
 export function lastUsedAt(id: string): number {
   return lastUsed[id] ?? 0;
 }
 
-/** Records use of a container; persisted at most every few minutes. */
+/**
+ * Records real use of a container (its tab brought to the front, or a click,
+ * key or scroll in it); background requests don't count. Persisted at most
+ * every few minutes.
+ */
 export async function markUsed(id: string, now = Date.now()): Promise<void> {
   lastUsed[id] = now;
   if (now - lastUsedSaved < 5 * 60_000) return;

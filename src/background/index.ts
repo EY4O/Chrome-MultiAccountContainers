@@ -246,7 +246,6 @@ async function checkStaleNavigation(details: chrome.webRequest.OnSendHeadersDeta
   await Promise.all(captures);
   const containerId = state.containerOfTab(details.tabId);
   if (!containerId) return;
-  void state.markUsed(containerId);
   const url = new URL(details.url);
   const sameSite = !details.initiator || siteOf(new URL(details.initiator).hostname) === siteOf(url.hostname);
   const expected = cookiesForUrl(state.getJar(containerId), url, sameSite ? "same-site" : "cross-site-navigation");
@@ -710,6 +709,12 @@ async function handle(msg: BgMessage, sender: chrome.runtime.MessageSender): Pro
     case "mac:get-snapshot":
       return snapshotFor(sender, msg.url);
 
+    case "mac:activity": {
+      const containerId = sender.tab?.id !== undefined ? state.containerOfTab(sender.tab.id) : undefined;
+      if (containerId) await state.markUsed(containerId);
+      return null;
+    }
+
     case "mac:set-cookie": {
       const containerId = sender.tab?.id === undefined ? undefined : state.containerOfTab(sender.tab.id);
       const url = frameUrl(sender, msg.url);
@@ -884,33 +889,45 @@ void startup.then(async () => {
 
 // --- Idle reset ------------------------------------------------------------------
 
-/** A container nobody has used for this long signs out of everything. */
-const MAX_IDLE_MS = 30 * 24 * 60 * 60_000;
-
-async function resetIdleContainers(): Promise<string[]> {
+/** Signs containers out of everything and reloads their tabs; returns their names. */
+async function signOut(ids: string[], reason: string): Promise<string[]> {
   await startup;
-  const reset: string[] = [];
-  for (const container of state.idleContainers(MAX_IDLE_MS)) {
-    await state.resetContainer(container.id);
-    reset.push(container.name);
-    logEvent("idle-reset", { containerId: container.id });
+  const names: string[] = [];
+  for (const id of ids) {
+    const container = state.getContainer(id);
+    if (!container) continue;
+    await state.resetContainer(id);
+    names.push(container.name);
+    logEvent(reason, { containerId: id });
   }
-  if (reset.length) {
+  if (names.length) {
     await scheduleSync();
     // Open pages hold the old storage prefix and cookies in memory.
-    for (const container of state.listContainers()) {
-      if (!reset.includes(container.name)) continue;
-      for (const tabId of state.tabsOf(container.id)) chrome.tabs.reload(tabId).catch(() => {});
-    }
+    for (const id of ids) for (const tabId of state.tabsOf(id)) chrome.tabs.reload(tabId).catch(() => {});
   }
-  return reset;
+  return names;
 }
 
-chrome.alarms.create("idle-reset", { periodInMinutes: 60 });
+/** Signs out every container unused for longer than the idle timeout. */
+async function resetIdleContainers(): Promise<string[]> {
+  await startup;
+  return signOut(state.idleContainers(settings.get().idleTimeoutMinutes).map((c) => c.id), "idle-reset");
+}
+
+// Every 15 minutes, so a 4-hour timeout is honoured to within 15 minutes.
+chrome.alarms.create("idle-reset", { periodInMinutes: 15 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "idle-reset") void resetIdleContainers();
 });
 void resetIdleContainers();
+
+// A locked computer may be left unattended: sign everything out.
+chrome.idle.onStateChanged.addListener((idleState) => {
+  if (idleState !== "locked") return;
+  void startup.then(() => {
+    if (settings.get().signOutOnLock) void signOut(state.listContainers().map((c) => c.id), "lock-sign-out");
+  });
+});
 
 // Like Chrome's "Continue where you left off": if the session came back,
 // session cookies come back with it; a fresh session starts without them.
@@ -965,6 +982,7 @@ if (!__RELEASE__) Object.assign(globalThis, {
       if (orphans.length) await chrome.tabs.remove(orphans).catch(() => {});
     },
     resetIdleContainers,
+    lockScreen: async () => settings.get().signOutOnLock ? signOut(state.listContainers().map((c) => c.id), "lock-sign-out") : [],
     buildId: __BUILD_ID__,
     listContainers: state.listContainers,
     listAssignments: state.listAssignments,

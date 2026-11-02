@@ -253,7 +253,7 @@ try {
   await remover.waitForSelector(".card");
   const options = await remover.$eval("#app", (e) => e.innerText);
   check("the options page shows sync, backup, shortcuts and privacy",
-    /Sync containers/.test(options) && /Export/.test(options) && /Ctrl\+Shift\+1/.test(options) && /30 days/.test(options), options.slice(0, 300));
+    /Sync containers/.test(options) && /Export/.test(options) && /Ctrl\+Shift\+1/.test(options) && /after 4 hours/.test(options), options.slice(0, 300));
 
   // --- Managed settings ------------------------------------------------------------------------
   const setSetting = (key, value) => remover.evaluate((key, value) => chrome.runtime.sendMessage({ type: "mac:set-setting", key, value }), key, value);
@@ -272,6 +272,13 @@ try {
   await mac(() => globalThis.mac.setManaged(null));
   check("without the policy the user's choice applies again",
     (await mac(() => globalThis.mac.settings())).values.syncEnabled === userSettings.values.syncEnabled);
+
+  // --- Sign out when the computer locks --------------------------------------------------------
+  await mac(() => globalThis.mac.setManaged({ signOutOnLock: false }));
+  check("with sign-out-on-lock off, locking signs nothing out", (await mac(() => globalThis.mac.lockScreen())).length === 0);
+  await mac(() => globalThis.mac.setManaged(null));
+  const lockedOut = await mac(() => globalThis.mac.lockScreen());
+  check("by default, locking the computer signs every container out", lockedOut.length === (await containers()).length && lockedOut.length > 0, lockedOut);
 } catch (e) {
   check("suite ran to completion", false, String(e?.stack ?? e));
 } finally {

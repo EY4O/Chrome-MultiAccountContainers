@@ -312,11 +312,21 @@ try {
   await sw.evaluate(() => globalThis.mac.setLimits({ total: 5000 }));
   check("a new container tab is refused when Chrome's rule limit is full", /rule limit/.test(refused), refused);
 
-  // --- Phase 2: 30-day idle reset (simulated) -----------------------------------------
+  // --- Idle sign-out (simulated) ---------------------------------------------------------
   await freshInWork.close(); // otherwise Work is still using fresh.localhost when it resets
-  await sw.evaluate((id) => globalThis.mac.backdateUse(id, 31 * 24 * 60 * 60_000), c2.id);
+  const HOUR = 60 * 60_000;
+  await p1.bringToFront(); // a background tab can't be clicked; bringing it forward counts as use, so backdate after
+  await sleep(300);
+  await sw.evaluate((id, ms) => globalThis.mac.backdateUse(id, ms), c1.id, 5 * HOUR);
+  await p1.mouse.click(5, 5);
+  await sleep(300);
+  await sw.evaluate((id, ms) => globalThis.mac.backdateUse(id, ms), c2.id, 3 * HOUR);
+  check("nothing used within the 4-hour default is signed out", (await sw.evaluate(() => globalThis.mac.resetIdleContainers())).length === 0);
+  await sw.evaluate((id, ms) => globalThis.mac.backdateUse(id, ms), c2.id, 4 * HOUR + 60_000);
+  await get(p2, "/echo"); // a page's own background request isn't use
   const reset = await sw.evaluate(() => globalThis.mac.resetIdleContainers());
-  check("a container unused for 30 days is reset", reset.includes("Work"), reset);
+  check("a container unused for 4 hours is signed out, despite its page's background requests", reset.includes("Work"), reset);
+  check("a click in a container's page counts as use", !reset.includes((await containerNamed(c1.id)).name), reset);
   await reopen(p2, "a");
   const afterReset = await p2.evaluate(() => ({ server: window.__serverCookie, ls: localStorage.getItem("who"), early: window.__early.cookie }));
   check("after a reset the container is signed out of cookies and site storage",

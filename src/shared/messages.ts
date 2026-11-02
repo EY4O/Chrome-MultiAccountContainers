@@ -52,6 +52,7 @@ export type BgMessage =
   | { type: "mac:get-snapshot"; url?: string }
   | { type: "mac:set-cookie"; cookie: string; url?: string }
   | { type: "mac:barrier" }
+  | { type: "mac:activity" }
   | { type: "mac:list"; tabId?: number }
   | { type: "mac:create"; name: string; color: GroupColor; emoji?: string }
   | { type: "mac:update"; id: string; name?: string; color?: GroupColor; emoji?: string }
