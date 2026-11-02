@@ -985,6 +985,7 @@ if (!__RELEASE__) Object.assign(globalThis, {
     syncStatus: () => ({ ...syncStatus }),
     settings: () => settings.resolved(),
     setManaged: settings.setManagedForTest,
+    setSetting: settings.setUserSetting,
     events: () => events,
   },
 });

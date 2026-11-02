@@ -4,6 +4,7 @@
 
 import type { Cookie } from "../shared/cookie.ts";
 import { type Sealed, isSealed, newKey, seal, unseal } from "../shared/crypto.ts";
+import * as settings from "./settings.ts";
 
 export type GroupColor = `${chrome.tabGroups.Color}`;
 
@@ -86,7 +87,28 @@ const jarKey = (id: string) => `jar:${id}`;
 const keyKey = (id: string) => `key:${id}`;
 const newStorageId = () => crypto.randomUUID().slice(0, 8);
 
+/**
+ * Where jar keys live. "memory": chrome.storage.session, which Chrome keeps
+ * while the worker sleeps but clears when the browser closes (and when the
+ * extension is updated or reloaded), so a restart signs every container out.
+ * "disk": chrome.storage.local, next to the sealed jars.
+ */
+const keyArea = () => (settings.get().keyStorage === "memory" ? chrome.storage.session : chrome.storage.local);
+const otherKeyArea = () => (settings.get().keyStorage === "memory" ? chrome.storage.local : chrome.storage.session);
+
+async function writeKey(id: string, key: string): Promise<void> {
+  await keyArea().set({ [keyKey(id)]: key });
+}
+
+/** Moves every key to the area the setting now names, and removes it from the other. */
+async function moveKeys(): Promise<void> {
+  const entries = Object.fromEntries([...keys].map(([id, key]) => [keyKey(id), key]));
+  await keyArea().set(entries);
+  await otherKeyArea().remove(Object.keys(entries));
+}
+
 export const ready: Promise<void> = (async () => {
+  await settings.ready;
   const local = await chrome.storage.local.get(["containers", "lastUsed", "containerOrigins", "assignments", "deletedContainers"]);
   containers = (local.containers as Container[] | undefined) ?? [];
   assignments = (local.assignments as Record<string, Assignment> | undefined) ?? {};
@@ -95,33 +117,52 @@ export const ready: Promise<void> = (async () => {
   const storedOrigins = local.containerOrigins;
   containerOrigins = storedOrigins && !Array.isArray(storedOrigins) ? (storedOrigins as Record<string, string[]>) : {};
   lastUsed = (local.lastUsed as Record<string, number> | undefined) ?? {};
-  const stored = await chrome.storage.local.get(containers.flatMap((c) => [jarKey(c.id), keyKey(c.id)]));
+  const names = containers.flatMap((c) => [jarKey(c.id), keyKey(c.id)]);
+  const stored = await chrome.storage.local.get(names);
+  // A key may still be in the other area if the mode changed while the worker
+  // was away (or, for "memory", on the first run after an upgrade); it moves below.
+  const sessionKeys = await chrome.storage.session.get(containers.map((c) => keyKey(c.id)));
   const now = Date.now();
+  const lost: string[] = [];
   for (const c of containers) {
     // Containers from before use was tracked start their idle clock now.
     lastUsed[c.id] ??= now;
-    let key = stored[keyKey(c.id)] as string | undefined;
+    const [here, there] = settings.get().keyStorage === "memory" ? [sessionKeys, stored] : [stored, sessionKeys];
+    let key = (here[keyKey(c.id)] ?? there[keyKey(c.id)]) as string | undefined;
     const raw = stored[jarKey(c.id)] as Sealed | Cookie[] | undefined;
     let jar: Cookie[] = [];
     if (Array.isArray(raw)) {
       jar = raw; // written before jars were encrypted; sealed below
-    } else if (raw && isSealed(raw) && key) {
-      jar = await unseal<Cookie[]>(key, raw).catch((e) => {
-        console.error(`jar for ${c.name} unreadable; starting empty`, e);
-        return [];
-      });
+    } else if (raw && isSealed(raw)) {
+      if (key) {
+        jar = await unseal<Cookie[]>(key, raw).catch((e) => {
+          console.error(`jar for ${c.name} unreadable; starting empty`, e);
+          return [];
+        });
+      } else {
+        // Its key went with the browser session ("memory" mode): signed out.
+        lost.push(c.id);
+      }
     }
-    if (!key) {
-      key = newKey();
-      await chrome.storage.local.set({ [keyKey(c.id)]: key });
-    }
+    key ??= newKey();
     keys.set(c.id, key);
     jars.set(c.id, jar);
-    if (Array.isArray(raw)) void saveJar(c.id);
+    if (Array.isArray(raw) || lost.includes(c.id)) void saveJar(c.id);
   }
+  if (lost.length) {
+    // Site storage is only prefixed, not encrypted; a new prefix makes the
+    // tokens sites kept there under the old one unreachable, as a reset does.
+    containers = containers.map((c) => (lost.includes(c.id) ? { ...c, storageId: newStorageId() } : c));
+    for (const id of lost) delete containerOrigins[id];
+    await chrome.storage.local.set({ containers, containerOrigins });
+  }
+  await moveKeys();
   await chrome.storage.local.set({ lastUsed });
   const s = await chrome.storage.session.get("state");
   if (s.state) session = s.state as SessionState;
+  settings.onSettingsChange(async (next, prev) => {
+    if (next.keyStorage !== prev.keyStorage) await moveKeys();
+  });
 })();
 
 const saving = new Map<string, Promise<void>>();
@@ -168,7 +209,8 @@ export async function createContainer(
   jars.set(container.id, []);
   lastUsed[container.id] = Date.now();
   delete deletedContainers[container.id];
-  await chrome.storage.local.set({ containers, [keyKey(container.id)]: key, lastUsed, deletedContainers });
+  await chrome.storage.local.set({ containers, lastUsed, deletedContainers });
+  await writeKey(container.id, key);
   await saveJar(container.id);
   changed();
   return container;
@@ -188,6 +230,7 @@ export async function deleteContainer(id: string, deletedAt = Date.now()): Promi
   await Promise.all([
     chrome.storage.local.set({ containers, lastUsed, assignments, deletedContainers }),
     chrome.storage.local.remove([jarKey(id), keyKey(id)]),
+    chrome.storage.session.remove(keyKey(id)),
     saveSession(),
   ]);
   changed();
@@ -296,7 +339,8 @@ export async function resetContainer(id: string): Promise<void> {
   jars.set(id, []);
   lastUsed[id] = Date.now();
   await forgetContainerOrigins(id);
-  await chrome.storage.local.set({ containers, [keyKey(id)]: key, lastUsed });
+  await chrome.storage.local.set({ containers, lastUsed });
+  await writeKey(id, key);
   await saveJar(id);
 }
 

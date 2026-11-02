@@ -1,6 +1,7 @@
 // Restart scenario: a container tab and a default tab are open, Chrome is
 // closed normally, then relaunched with session restore on the same profile.
-// Run `npm run build` first.
+// First with keys kept on disk (sign-ins survive), then with keys kept in
+// memory (the default; a restart signs containers out). Run `npm run build` first.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -41,7 +42,11 @@ try {
   let browser = await launch();
   let sw = await workerOf(browser);
   await sw.evaluate(() => globalThis.mac.scheduleSync());
+  check("keys are kept in memory by default", (await sw.evaluate(() => globalThis.mac.settings())).values.keyStorage === "memory");
+  await sw.evaluate(() => globalThis.mac.setSetting("keyStorage", "disk"));
   const work = await sw.evaluate(() => globalThis.mac.createContainer("Work", "red"));
+  const keyIn = (area) => sw.evaluate(async (area, id) => !!(await chrome.storage[area].get(`key:${id}`))[`key:${id}`], area, work.id);
+  check("on disk, the key is in local storage and not session storage", (await keyIn("local")) && !(await keyIn("session")));
 
   const dflt = (await browser.pages())[0];
   await dflt.goto(u("a", "/page?tab=default"));
@@ -90,6 +95,30 @@ try {
   check("nothing leaked into the real cookie store during startup", real.join() === "sid=default", real);
   const dynamic = await sw.evaluate(() => chrome.declarativeNetRequest.getDynamicRules());
   check("lockdown rule is installed", stats.lockdown && dynamic.some((r) => r.action.type === "block"), { stats, dynamic });
+
+  // --- Keys in memory: the next restart signs the container out --------------------------
+  const storageIdBefore = (await sw.evaluate(() => globalThis.mac.listContainers()))[0].storageId;
+  await sw.evaluate(() => globalThis.mac.setSetting("keyStorage", "memory"));
+  check("switching to memory moves the key out of local storage", !(await keyIn("local")) && (await keyIn("session")));
+  check("switching modes keeps the container signed in for now",
+    (await restoredWork.evaluate(async () => (await (await fetch("/echo")).json()).cookie)).includes("sid=work"));
+  await sleep(300);
+  await browser.close();
+
+  browser = await launch(["--restore-last-session"]);
+  sw = await workerOf(browser);
+  const signedOut = await pageWith("tab=work");
+  const afterStats = await sw.evaluate(() => ({ ...globalThis.mac.stats }));
+  check("with keys in memory, the Work tab still comes back into its container", afterStats.restoredIntoContainers >= 1, afterStats);
+  const outCookie = await signedOut.evaluate(() => window.__serverCookie);
+  check("but it's signed out: no Work cookies", !outCookie.includes("sid=work") && !outCookie.includes("sess=1"), outCookie);
+  check("and its old site storage is out of reach", (await signedOut.evaluate(() => localStorage.getItem("who"))) !== "work",
+    await signedOut.evaluate(() => localStorage.getItem("who")));
+  const storageIdAfter = (await sw.evaluate(() => globalThis.mac.listContainers()))[0].storageId;
+  check("its storage prefix was rotated", storageIdAfter && storageIdAfter !== storageIdBefore, { storageIdBefore, storageIdAfter });
+  check("the default tab is unaffected", (await (await pageWith("tab=default")).evaluate(() => window.__serverCookie)) === "sid=default");
+  const realAfter = (await browser.cookies()).map((c) => `${c.name}=${c.value}`);
+  check("still nothing leaked into the real cookie store", realAfter.join() === "sid=default", realAfter);
 
   await browser.close();
 } catch (e) {

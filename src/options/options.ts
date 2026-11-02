@@ -70,6 +70,27 @@ async function syncSection(): Promise<HTMLElement> {
         line, paint)));
 }
 
+/** How long container sign-ins last. */
+function signInSection(): HTMLElement {
+  const keep = h("input", { type: "checkbox", role: "switch", "aria-label": "Stay signed in after Chrome closes",
+    checked: settings.values.keyStorage === "disk", disabled: isLocked("keyStorage"),
+    onchange: async () => {
+      keep.disabled = true;
+      try {
+        await setSetting("keyStorage", keep.checked ? "disk" : "memory");
+      } finally {
+        keep.checked = settings.values.keyStorage === "disk";
+        keep.disabled = isLocked("keyStorage");
+      }
+    } });
+  return h("section", {},
+    h("h2", {}, "Sign-ins"),
+    h("div", { class: "card" },
+      row("Stay signed in after Chrome closes",
+        "When this is off, each container's key is kept only while Chrome is open, so closing Chrome signs every container out. When it's on, keys are saved on this computer next to the encrypted cookies.",
+        h("label", { class: "switch" }, keep, h("span", {})), isLocked("keyStorage") ? lockedNote() : null)));
+}
+
 function backupSection(): HTMLElement {
   const result = h("p", { class: "secondary", role: "status" });
   const file = h("input", { type: "file", accept: "application/json,.json", class: "visually-hidden", tabindex: "-1",
@@ -134,7 +155,7 @@ function privacySection(): HTMLElement {
 
 async function main(): Promise<void> {
   settings = await send<Resolved>({ type: "mac:settings" });
-  app.replaceChildren(await syncSection(), backupSection(), await shortcutsSection(), privacySection());
+  app.replaceChildren(signInSection(), await syncSection(), backupSection(), await shortcutsSection(), privacySection());
 }
 
 void main();
