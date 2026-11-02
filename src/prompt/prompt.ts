@@ -59,7 +59,10 @@ async function main(): Promise<void> {
   app.querySelector<HTMLElement>("[autofocus]")?.focus();
 }
 
-void main().catch((e) => {
+// Never inside another page's frame (the equivalent of frame-ancestors 'none'):
+// a framed copy would be a way to trick someone into choosing.
+if (window.top !== window) app.replaceChildren();
+else void main().catch((e) => {
   app.replaceChildren(h("h1", {}, "Something went wrong"), h("p", { class: "body" }, String(e?.message ?? e)),
     h("div", { class: "actions" }, h("div", { class: "buttons" }, h("button", { class: "btn filled", type: "button", onclick: () => location.reload() }, "Try again"))));
 });

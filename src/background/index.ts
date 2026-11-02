@@ -580,6 +580,14 @@ function snapshotFor(sender: chrome.runtime.MessageSender, claimed?: string): Sn
 const fromExtensionPage = (sender: chrome.runtime.MessageSender) =>
   sender.id === chrome.runtime.id && !!sender.url?.startsWith(chrome.runtime.getURL(""));
 
+/**
+ * The "Open in …?" page as the top frame of its own tab. Sites can't load it at
+ * all (its manifest entry has use_dynamic_url), but if one ever framed it, the
+ * frame couldn't move its tab or change an assignment.
+ */
+const fromPromptPage = (sender: chrome.runtime.MessageSender) =>
+  fromExtensionPage(sender) && sender.frameId === 0 && sender.tab?.id !== undefined && new URL(sender.url!).pathname === "/prompt.html";
+
 /** Moves a tab into a container (or out to normal); live group sync then switches and reloads it. */
 async function reopenTab(tabId: number, containerId: string | null): Promise<void> {
   if ((state.containerOfTab(tabId) ?? null) === containerId) return;
@@ -647,6 +655,7 @@ function promptInfo(url: string, tabId: number | undefined): PromptInfo | null {
 }
 
 async function promptChoice(url: string, open: boolean, remember: boolean, tabId: number): Promise<void> {
+  if (!/^https?:/.test(url)) return;
   const host = new URL(url).hostname;
   const assignment = state.getAssignment(host);
   if (!assignment) {
@@ -764,9 +773,9 @@ async function handle(msg: BgMessage, sender: chrome.runtime.MessageSender): Pro
       await assignSite(msg.host, msg.id, msg.tabId);
       return null;
     case "mac:prompt-info":
-      return promptInfo(msg.url, sender.tab?.id);
+      return fromPromptPage(sender) ? promptInfo(msg.url, sender.tab!.id) : null;
     case "mac:prompt-choice":
-      if (sender.tab?.id !== undefined) await promptChoice(msg.url, msg.open, msg.remember, sender.tab.id);
+      if (fromPromptPage(sender)) await promptChoice(msg.url, msg.open, msg.remember, sender.tab!.id!);
       return null;
     case "mac:export":
       return exportBackup();

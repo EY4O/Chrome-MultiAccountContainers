@@ -180,6 +180,41 @@ try {
   const thirdId = await tabIdOf(third.url());
   check("the next visit switches without asking", (await mac((id) => globalThis.mac.containerOfTab(id), thirdId)) === fab.id, third.url());
 
+  // A site can't use the prompt page: not by framing it, not by opening it.
+  const assignedUrl = u("a", "/admin?action=x");
+  const evil = await normalTab(u("b", "/page?evil"));
+  const evilId = await tabIdOf(evil.url());
+  const frameIn = (page, src) => page.evaluate(async (src) => {
+    const f = document.createElement("iframe");
+    f.src = src;
+    document.body.append(f);
+    await new Promise((ok) => setTimeout(ok, 1500));
+  }, src);
+  await frameIn(evil, `chrome-extension://${ext}/prompt.html#${assignedUrl}`);
+  check("a site can't frame the prompt page", !evil.frames().some((f) => f.url().includes("prompt.html")), evil.frames().map((f) => f.url()));
+  const opener = await normalTab(u("b", "/page?opener"));
+  await opener.evaluate((to) => { location.href = to; }, `chrome-extension://${ext}/prompt.html#${assignedUrl}`).catch(() => {});
+  await sleep(1500);
+  check("a site can't send a tab to the prompt page", !opener.url().includes("prompt.html"), opener.url());
+  // Worst case: a site that somehow learnt this session's dynamic address frames it.
+  const dynamicUrl = await mac(() => chrome.runtime.getURL("prompt.html"));
+  const assignmentBefore = JSON.stringify((await mac(() => globalThis.mac.listAssignments()))["a.localhost"]);
+  await frameIn(evil, `${dynamicUrl}#${assignedUrl}`);
+  const framed = evil.frames().find((f) => f.url().includes("prompt.html"));
+  check("a framed prompt page renders nothing", framed && (await framed.evaluate(() => document.getElementById("app").children.length)) === 0, framed?.url());
+  const replies = framed && await framed.evaluate(async (url) => [
+    await chrome.runtime.sendMessage({ type: "mac:prompt-info", url }),
+    await chrome.runtime.sendMessage({ type: "mac:prompt-choice", url, open: true, remember: true }),
+    await chrome.runtime.sendMessage({ type: "mac:prompt-choice", url, open: false, remember: true }),
+  ], assignedUrl);
+  await sleep(500);
+  check("...and its messages can't move the tab or change the assignment",
+    replies?.[0] === null && !(await mac((id) => globalThis.mac.containerOfTab(id), evilId)) &&
+    JSON.stringify((await mac(() => globalThis.mac.listAssignments()))["a.localhost"]) === assignmentBefore && evil.url().includes("b.localhost"),
+    { replies, url: evil.url() });
+  await evil.close();
+  await opener.close();
+
   await mac(() => chrome.runtime.sendMessage === undefined); // keep the worker warm
   const remover = await browser.newPage();
   await remover.goto(`chrome-extension://${ext}/options.html`);
