@@ -10,6 +10,7 @@ import {
   parseSetCookie,
   siteOf,
 } from "../shared/cookie.ts";
+import { validateBackup } from "../shared/backup.ts";
 import type { Backup, BgMessage, ContainerView, PopupState, PromptInfo, SnapshotReply } from "../shared/messages.ts";
 import { installMenus } from "./menus.ts";
 import { installSync, pull as syncPull, push as syncPush, syncStatus } from "./sync.ts";
@@ -677,6 +678,7 @@ async function promptChoice(url: string, open: boolean, remember: boolean, tabId
 }
 
 function exportBackup(): Backup {
+  if (!settings.get().allowBackupExport) throw new Error("Exporting a backup is turned off by your organization.");
   return {
     format: "containers-backup",
     version: 1,
@@ -687,10 +689,9 @@ function exportBackup(): Backup {
 }
 
 /** Merges a backup: containers by id (renamed if the name is taken), assignments by host. */
-async function importBackup(backup: Backup): Promise<{ added: number; updated: number; sites: number }> {
-  if (backup?.format !== "containers-backup" || !Array.isArray(backup.containers)) {
-    throw new Error("That file isn't a containers backup.");
-  }
+async function importBackup(file: unknown): Promise<{ added: number; updated: number; sites: number }> {
+  if (!settings.get().allowBackupImport) throw new Error("Importing a backup is turned off by your organization.");
+  const backup = validateBackup(file, state.listContainers().map((c) => c.id));
   const result = { added: 0, updated: 0, sites: 0 };
   for (const c of backup.containers) {
     const existing = state.getContainer(c.id);

@@ -133,6 +133,11 @@ function deviceSection(): HTMLElement {
         "Stops Chrome tying a container's sign-in to this profile's own cookies. While this is on, container tabs don't get Chrome's protection against stolen session cookies.")));
 }
 
+/** Why a backup button is unavailable. */
+function turnedOff(key: "allowBackupExport" | "allowBackupImport"): HTMLElement {
+  return isLocked(key) ? lockedNote() : h("p", { class: "secondary" }, "Turned off.");
+}
+
 function backupSection(): HTMLElement {
   const result = h("p", { class: "secondary", role: "status" });
   const file = h("input", { type: "file", accept: "application/json,.json", class: "visually-hidden", tabindex: "-1",
@@ -151,7 +156,7 @@ function backupSection(): HTMLElement {
         file.value = "";
       }
     } });
-  const exportBtn = h("button", { class: "btn", type: "button", onclick: async () => {
+  const exportBtn = h("button", { class: "btn", type: "button", disabled: !settings.values.allowBackupExport, onclick: async () => {
     const backup = await send<Backup>({ type: "mac:export" });
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const a = h("a", { href: URL.createObjectURL(blob), download: `containers-${backup.exportedAt.slice(0, 10)}.json` });
@@ -163,8 +168,11 @@ function backupSection(): HTMLElement {
   return h("section", {},
     h("h2", {}, "Backup"),
     h("div", { class: "card" },
-      row("Export containers and site assignments", "Saves a file you can import on another computer. It contains no sign-ins.", exportBtn),
-      row("Import from a file", result, h("button", { class: "btn", type: "button", onclick: () => file.click() }, icon("upload"), "Import")),
+      row("Export containers and site assignments", "Saves a file you can import on another computer. It contains no sign-ins.", exportBtn,
+        settings.values.allowBackupExport ? null : turnedOff("allowBackupExport")),
+      row("Import from a file", result,
+        h("button", { class: "btn", type: "button", disabled: !settings.values.allowBackupImport, onclick: () => file.click() }, icon("upload"), "Import"),
+        settings.values.allowBackupImport ? null : turnedOff("allowBackupImport")),
       file));
 }
 

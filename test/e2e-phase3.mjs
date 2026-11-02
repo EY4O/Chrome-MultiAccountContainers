@@ -292,12 +292,28 @@ try {
   const backup = await remover.evaluate(() => chrome.runtime.sendMessage({ type: "mac:export" }));
   check("export lists containers and sites, with no sign-ins",
     backup.containers.length === 2 && !JSON.stringify(backup).match(/jar|cookie|storageId/), backup);
-  backup.containers.push({ id: "imp1", name: "Imported", color: "green", emoji: "📦" });
-  backup.assignments["imported.example"] = { containerId: "imp1", ask: true };
+  backup.containers.push({ id: "1a2b3c4d", name: "Imported", color: "green", emoji: "📦" });
+  backup.assignments["imported.example"] = { containerId: "1a2b3c4d", ask: true };
   const imported = await remover.evaluate((b) => chrome.runtime.sendMessage({ type: "mac:import", backup: b }), backup);
   check("import adds new containers and sites", imported.added === 1 && (await named("Imported"))?.emoji === "📦", imported);
   const bad = await remover.evaluate(() => chrome.runtime.sendMessage({ type: "mac:import", backup: { nope: true } }));
   check("a file that isn't a backup is refused with a message", /isn't a containers backup/.test(bad?.error ?? ""), bad);
+  const countBefore = (await containers()).length;
+  const tainted = structuredClone(backup);
+  tainted.containers.push({ id: "5e6f7a8b", name: "Sneaky", color: "green" });
+  tainted.assignments["https://evil.example/x"] = { containerId: "5e6f7a8b", ask: true };
+  const taintedReply = await remover.evaluate((b) => chrome.runtime.sendMessage({ type: "mac:import", backup: b }), tainted);
+  check("a file with one bad entry is refused whole, saying which",
+    /evil\.example.*isn't a site address/.test(taintedReply?.error ?? "") && (await containers()).length === countBefore && !(await named("Sneaky")), taintedReply);
+  await mac(() => globalThis.mac.setManaged({ allowBackupExport: false, allowBackupImport: false }));
+  const noExport = await remover.evaluate(() => chrome.runtime.sendMessage({ type: "mac:export" }));
+  const noImport = await remover.evaluate((b) => chrome.runtime.sendMessage({ type: "mac:import", backup: b }), backup);
+  check("a policy can turn export and import off", /turned off/.test(noExport?.error ?? "") && /turned off/.test(noImport?.error ?? ""), { noExport, noImport });
+  await remover.reload();
+  await remover.waitForSelector(".card");
+  const backupButtons = await remover.$$eval(".card .btn", (bs) => bs.filter((b) => /Export|Import/.test(b.textContent)).map((b) => b.disabled));
+  check("...and the options page disables both buttons", backupButtons.length === 2 && backupButtons.every(Boolean), backupButtons);
+  await mac(() => globalThis.mac.setManaged(null));
 
   // --- Options page --------------------------------------------------------------------------
   await remover.reload();
