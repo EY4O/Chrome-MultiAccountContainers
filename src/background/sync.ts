@@ -1,5 +1,7 @@
 // Syncs container definitions and site assignments through the user's Chrome
 // account (chrome.storage.sync). Cookies, keys and site storage never sync.
+// Off by default: container names are often client names, and assigned hosts
+// their portals. While it's off, nothing of ours is left in sync storage.
 //
 // One sync item per container ("c:<id>": name, colour, emoji, order and its
 // assignments) keeps each under Chrome's 8 KB per-item limit; "meta" carries
@@ -132,6 +134,17 @@ export async function pull(): Promise<void> {
   }
 }
 
+/** Removes everything this extension put in sync storage (the Google account's copy). */
+async function clearRemote(): Promise<void> {
+  try {
+    const remote = await chrome.storage.sync.get(null);
+    const ours = Object.keys(remote).filter((k) => k.startsWith(PREFIX) || k === META);
+    if (ours.length) await chrome.storage.sync.remove(ours);
+  } catch (e) {
+    syncStatus.error = String(e instanceof Error ? e.message : e);
+  }
+}
+
 function schedulePush(): void {
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => void push(), 1000);
@@ -145,9 +158,12 @@ export async function installSync(h: SyncHooks): Promise<void> {
   settings.onSettingsChange(async (next, prev) => {
     if (next.syncEnabled === prev.syncEnabled) return;
     syncStatus.enabled = next.syncEnabled;
+    clearTimeout(pushTimer);
     if (next.syncEnabled) {
       await pull();
       await push();
+    } else {
+      await clearRemote();
     }
   });
   state.onChange(() => {
@@ -156,6 +172,8 @@ export async function installSync(h: SyncHooks): Promise<void> {
   chrome.storage.onChanged.addListener((_changes, area) => {
     if (area === "sync" && !applying) void pull();
   });
+  // Also covers sync turned off (or by policy) while this worker wasn't running.
+  if (!syncStatus.enabled) await clearRemote();
   await pull();
   await push();
 }

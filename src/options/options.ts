@@ -66,7 +66,7 @@ async function syncSection(): Promise<HTMLElement> {
     h("h2", {}, "Sync"),
     h("div", { class: "card" },
       switchRow("syncEnabled", "Sync containers and site assignments",
-        "Names, colours, emoji and “always open” sites sync through your Chrome account. Sign-ins and cookies never leave this computer.",
+        "Sends container names, colours, emoji and the addresses of “always open” sites to the Google account this Chrome profile is signed in to, so your other computers get them. Sign-ins and cookies never leave this computer. Turning sync off removes them from the account.",
         line, paint)));
 }
 

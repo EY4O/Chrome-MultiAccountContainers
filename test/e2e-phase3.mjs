@@ -216,6 +216,10 @@ try {
     (await mac((id) => globalThis.mac.containerOfTab(id), newest)) === (await containers())[0].id);
 
   // --- Sync ---------------------------------------------------------------------------------
+  check("sync is off by default", (await mac(() => globalThis.mac.settings())).values.syncEnabled === false);
+  await mac(() => globalThis.mac.syncPush());
+  check("while sync is off nothing goes to the Google account", Object.keys(await mac(() => chrome.storage.sync.get(null))).length === 0);
+  await mac(() => globalThis.mac.setSetting("syncEnabled", true));
   await mac(() => globalThis.mac.syncPush());
   const synced = await mac(() => chrome.storage.sync.get(null));
   const item = synced[`c:${contoso.id}`];
@@ -236,6 +240,18 @@ try {
   await mac(() => chrome.storage.sync.set({ meta: { deleted: { remote1: Date.now() + 3000 } } }));
   await sleep(800);
   check("a deletion synced from elsewhere applies here", !(await named("From laptop")));
+  await mac(() => globalThis.mac.setManaged({ syncEnabled: false }));
+  await sleep(300);
+  const afterPolicy = await mac(() => chrome.storage.sync.get(null));
+  check("a policy turning sync off removes the Google account's copy", Object.keys(afterPolicy).length === 0, Object.keys(afterPolicy));
+  await mac(() => globalThis.mac.createContainer("While off", "grey"));
+  await sleep(1500); // past the push delay
+  check("and nothing is pushed while the policy holds", Object.keys(await mac(() => chrome.storage.sync.get(null))).length === 0);
+  await mac(() => globalThis.mac.setManaged(null));
+  await sleep(500);
+  check("without the policy the user's choice (on) applies again",
+    (await mac(() => chrome.storage.sync.get(null)))[`c:${(await named("While off")).id}`]?.name === "While off");
+  await mac((id) => globalThis.mac.deleteContainer(id), (await named("While off")).id);
 
   // --- Backup ---------------------------------------------------------------------------------
   const backup = await remover.evaluate(() => chrome.runtime.sendMessage({ type: "mac:export" }));

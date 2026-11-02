@@ -23,7 +23,7 @@ export interface Settings {
 export type SettingKey = keyof Settings;
 
 export const DEFAULTS: Readonly<Settings> = {
-  syncEnabled: true,
+  syncEnabled: false,
   keyStorage: "memory",
   idleTimeoutMinutes: 240,
   signOutOnLock: true,
