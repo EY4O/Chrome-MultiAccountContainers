@@ -7,6 +7,7 @@
 // Each container carries updatedAt; the newer side wins, per container.
 
 import type { SyncStatus } from "../shared/messages.ts";
+import * as settings from "./settings.ts";
 import * as state from "./state.ts";
 
 interface SyncedContainer {
@@ -28,7 +29,7 @@ const META = "meta";
 /** Tombstones older than this are dropped; a computer offline longer re-adds the container. */
 const TOMBSTONE_MS = 90 * 24 * 60 * 60_000;
 
-export const syncStatus: SyncStatus = { enabled: true, lastPush: 0, lastPull: 0, error: "" };
+export const syncStatus: SyncStatus = { enabled: false, lastPush: 0, lastPull: 0, error: "" };
 
 export interface SyncHooks {
   /** Delete a container here because it was deleted elsewhere (closes its tabs). */
@@ -136,18 +137,19 @@ function schedulePush(): void {
   pushTimer = setTimeout(() => void push(), 1000);
 }
 
-export async function setEnabled(enabled: boolean): Promise<void> {
-  syncStatus.enabled = enabled;
-  await chrome.storage.local.set({ syncEnabled: enabled });
-  if (enabled) {
-    await pull();
-    await push();
-  }
-}
-
 export async function installSync(h: SyncHooks): Promise<void> {
   hooks = h;
-  syncStatus.enabled = ((await chrome.storage.local.get("syncEnabled")).syncEnabled as boolean | undefined) ?? true;
+  await settings.ready;
+  syncStatus.enabled = settings.get().syncEnabled;
+  // The switch on the options page, or a policy, turns sync on or off.
+  settings.onSettingsChange(async (next, prev) => {
+    if (next.syncEnabled === prev.syncEnabled) return;
+    syncStatus.enabled = next.syncEnabled;
+    if (next.syncEnabled) {
+      await pull();
+      await push();
+    }
+  });
   state.onChange(() => {
     if (!applying) schedulePush();
   });

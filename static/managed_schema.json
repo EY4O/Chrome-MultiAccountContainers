@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "properties": {
+    "syncEnabled": {
+      "title": "Sync containers",
+      "description": "Sync container names, colours, emoji and site assignments through the Google account the Chrome profile is signed in to. Cookies and site data never sync.",
+      "type": "boolean"
+    },
+    "keyStorage": {
+      "title": "Where container keys are kept",
+      "description": "\"memory\": each container's cookie-jar key is kept only for the browser session, so closing Chrome signs every container out. \"disk\": keys are kept in the extension's storage and sign-ins survive restarts.",
+      "type": "string",
+      "enum": [
+        "memory",
+        "disk"
+      ]
+    },
+    "idleTimeoutMinutes": {
+      "title": "Idle sign-out (minutes)",
+      "description": "Sign a container out after this many minutes without being used. 15 to 43200.",
+      "type": "integer",
+      "minimum": 15,
+      "maximum": 43200
+    },
+    "signOutOnLock": {
+      "title": "Sign out when the computer locks",
+      "description": "Sign every container out when the operating system reports the screen is locked.",
+      "type": "boolean"
+    },
+    "stripMicrosoftDeviceHeaders": {
+      "title": "Keep Microsoft device sign-in out of containers",
+      "description": "Remove x-ms-RefreshTokenCredential and x-ms-DeviceCredential from container tabs, so a container can't sign in with this device's own work account. Conditional Access rules that require a compliant device then fail inside containers.",
+      "type": "boolean"
+    },
+    "stripDbscHeaders": {
+      "title": "Keep Device Bound Session Credentials out of containers",
+      "description": "Remove Sec-Session-Registration and Sec-Session-Challenge in container tabs, so Chrome doesn't bind a container's session to the profile's own cookies.",
+      "type": "boolean"
+    },
+    "allowBackupExport": {
+      "title": "Allow backup export",
+      "description": "Allow exporting container names and site assignments to a file.",
+      "type": "boolean"
+    },
+    "allowBackupImport": {
+      "title": "Allow backup import",
+      "description": "Allow importing containers and site assignments from a file.",
+      "type": "boolean"
+    }
+  }
+}

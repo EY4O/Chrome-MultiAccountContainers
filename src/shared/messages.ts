@@ -1,4 +1,5 @@
 import type { Assignment, Container, GroupColor } from "../background/state.ts";
+import type { SettingKey, Settings } from "./settings.ts";
 
 /** [name, value, expires epoch ms or 0 for session] */
 export type SnapshotCookie = [string, string, number];
@@ -66,7 +67,8 @@ export type BgMessage =
   | { type: "mac:export" }
   | { type: "mac:import"; backup: Backup }
   | { type: "mac:sync-status" }
-  | { type: "mac:set-sync"; enabled: boolean };
+  | { type: "mac:settings" }
+  | { [K in SettingKey]: { type: "mac:set-setting"; key: K; value: Settings[K] } }[SettingKey];
 
 /** Server-Timing entry names the DNR rules append to container documents. */
 export const MARKER = "__macc";

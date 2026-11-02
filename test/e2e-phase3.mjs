@@ -254,6 +254,24 @@ try {
   const options = await remover.$eval("#app", (e) => e.innerText);
   check("the options page shows sync, backup, shortcuts and privacy",
     /Sync containers/.test(options) && /Export/.test(options) && /Ctrl\+Shift\+1/.test(options) && /30 days/.test(options), options.slice(0, 300));
+
+  // --- Managed settings ------------------------------------------------------------------------
+  const setSetting = (key, value) => remover.evaluate((key, value) => chrome.runtime.sendMessage({ type: "mac:set-setting", key, value }), key, value);
+  const userSettings = await mac(() => globalThis.mac.settings());
+  await mac(() => globalThis.mac.setManaged({ syncEnabled: false }));
+  await remover.reload();
+  await remover.waitForSelector(".card");
+  const syncSwitch = await remover.$eval('input[aria-label="Sync containers and site assignments"]', (el) => ({
+    checked: el.checked, disabled: el.disabled, note: el.closest(".card-row").innerText,
+  }));
+  check("a managed setting shows its value, locked, with \"Set by your organization\"",
+    !syncSwitch.checked && syncSwitch.disabled && /Set by your organization/.test(syncSwitch.note), syncSwitch);
+  const refused = await setSetting("syncEnabled", true);
+  check("the worker refuses a change to a managed setting",
+    /organization manages/.test(refused?.error ?? "") && (await mac(() => globalThis.mac.settings())).values.syncEnabled === false, refused);
+  await mac(() => globalThis.mac.setManaged(null));
+  check("without the policy the user's choice applies again",
+    (await mac(() => globalThis.mac.settings())).values.syncEnabled === userSettings.values.syncEnabled);
 } catch (e) {
   check("suite ran to completion", false, String(e?.stack ?? e));
 } finally {

@@ -1,10 +1,41 @@
 // Options page: sync, backup, keyboard shortcuts, and what the extension
 // stores, in chrome://settings's card-of-rows layout.
 
-import type { Backup, SyncStatus } from "../shared/messages.ts";
+import type { Backup, BgMessage, SyncStatus } from "../shared/messages.ts";
+import type { Resolved, SettingKey, Settings } from "../shared/settings.ts";
 import { h, icon, send } from "../ui/dom.ts";
 
 const app = document.getElementById("app")!;
+
+/** Effective settings and which ones an administrator has set. */
+let settings: Resolved;
+const isLocked = (key: SettingKey) => settings.locked.includes(key);
+
+async function setSetting<K extends SettingKey>(key: K, value: Settings[K]): Promise<void> {
+  settings = await send<Resolved>({ type: "mac:set-setting", key, value } as BgMessage);
+}
+
+function lockedNote(): HTMLElement {
+  return h("p", { class: "secondary locked-note" }, icon("lock"), "Set by your organization");
+}
+
+type BoolKey = { [K in SettingKey]: Settings[K] extends boolean ? K : never }[SettingKey];
+
+/** A switch row for a yes/no setting; disabled, with a note, when it's managed. */
+function switchRow(key: BoolKey, title: string, detail: string, extra: Node | null = null, after?: () => void | Promise<void>): HTMLElement {
+  const toggle = h("input", { type: "checkbox", role: "switch", "aria-label": title, checked: settings.values[key], disabled: isLocked(key),
+    onchange: async () => {
+      toggle.disabled = true;
+      try {
+        await setSetting(key, toggle.checked);
+      } finally {
+        toggle.checked = settings.values[key];
+        toggle.disabled = isLocked(key);
+      }
+      await after?.();
+    } });
+  return row(title, detail, h("label", { class: "switch" }, toggle, h("span", {})), h("div", {}, isLocked(key) ? lockedNote() : null, extra));
+}
 
 function ago(ms: number): string {
   if (!ms) return "not yet";
@@ -23,27 +54,20 @@ function row(title: string, detail: Node | string | null, trailing: Node | null,
 }
 
 async function syncSection(): Promise<HTMLElement> {
-  let status = await send<SyncStatus>({ type: "mac:sync-status" });
   const line = h("p", { class: "secondary status-line", role: "status" });
-  const toggle = h("input", { type: "checkbox", role: "switch", "aria-label": "Sync containers and site assignments", checked: status.enabled,
-    onchange: async () => {
-      toggle.disabled = true;
-      status = await send<SyncStatus>({ type: "mac:set-sync", enabled: toggle.checked });
-      toggle.disabled = false;
-      paint();
-    } });
-  function paint(): void {
+  async function paint(): Promise<void> {
+    const status = await send<SyncStatus>({ type: "mac:sync-status" });
     if (!status.enabled) line.replaceChildren(h("span", { class: "status-ok" }, "Off. Changes stay on this computer."));
     else if (status.error) line.replaceChildren(h("span", { class: "status-bad" }, `Couldn't sync: ${status.error}`));
     else line.replaceChildren(h("span", { class: "status-ok" }, `On. Last synced ${ago(Math.max(status.lastPush, status.lastPull))}.`));
   }
-  paint();
+  await paint();
   return h("section", {},
     h("h2", {}, "Sync"),
     h("div", { class: "card" },
-      row("Sync containers and site assignments",
+      switchRow("syncEnabled", "Sync containers and site assignments",
         "Names, colours, emoji and “always open” sites sync through your Chrome account. Sign-ins and cookies never leave this computer.",
-        h("label", { class: "switch" }, toggle, h("span", {})), line)));
+        line, paint)));
 }
 
 function backupSection(): HTMLElement {
@@ -109,6 +133,7 @@ function privacySection(): HTMLElement {
 }
 
 async function main(): Promise<void> {
+  settings = await send<Resolved>({ type: "mac:settings" });
   app.replaceChildren(await syncSection(), backupSection(), await shortcutsSection(), privacySection());
 }
 

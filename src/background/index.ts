@@ -12,8 +12,9 @@ import {
 } from "../shared/cookie.ts";
 import type { Backup, BgMessage, ContainerView, PopupState, PromptInfo, SnapshotReply } from "../shared/messages.ts";
 import { installMenus } from "./menus.ts";
-import { installSync, pull as syncPull, push as syncPush, setEnabled as setSyncEnabled, syncStatus } from "./sync.ts";
+import { installSync, pull as syncPull, push as syncPush, syncStatus } from "./sync.ts";
 import { LOCKDOWN_RULE, buildRules, ruleUsage, serviceWorkerHosts as hostsFor } from "./rules.ts";
+import * as settings from "./settings.ts";
 import * as state from "./state.ts";
 
 export const stats = {
@@ -766,9 +767,11 @@ async function handle(msg: BgMessage, sender: chrome.runtime.MessageSender): Pro
       return importBackup(msg.backup);
     case "mac:sync-status":
       return { ...syncStatus };
-    case "mac:set-sync":
-      await setSyncEnabled(msg.enabled);
-      return { ...syncStatus };
+    case "mac:settings":
+      await settings.ready;
+      return settings.resolved();
+    case "mac:set-setting":
+      return settings.setUserSetting(msg.key, msg.value);
     case "mac:delete": {
       const orphans = await state.deleteContainer(msg.id);
       await scheduleSync();
@@ -980,6 +983,8 @@ if (!__RELEASE__) Object.assign(globalThis, {
     syncPull,
     syncPush,
     syncStatus: () => ({ ...syncStatus }),
+    settings: () => settings.resolved(),
+    setManaged: settings.setManagedForTest,
     events: () => events,
   },
 });
